@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HP制四目並べ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>HP制 四目並べ</h1>
+  <div class="subtitle">9×9盤・体力6・バックアタックとダメージマークで揺さぶり合う対戦</div>
+
+  <div id="errorBox"></div>
+
+  <div class="lobby-card">
+    <h2>新しく対局をはじめる</h2>
+    <p>対局を作成すると専用のID（リンク）が発行されます。相手のスマホやPCのブラウザでそのリンクを開けば、同じ盤面を見ながら対戦できます。</p>
+    <div class="controls" style="margin:0;">
+      <button class="primary" id="createBtn">対局を作成する</button>
+    </div>
+  </div>
+
+  <div class="lobby-card">
+    <h2>対局に参加する</h2>
+    <p>相手から共有された対局IDを入力してください。</p>
+    <div class="join-row">
+      <input type="text" id="joinId" maxlength="6" placeholder="例：AB12CD">
+      <button id="joinBtn">参加する</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const errorBox = document.getElementById('errorBox');
+function showError(msg){
+  errorBox.innerHTML = `<div class="error-box">${msg}</div>`;
+}
+
+document.getElementById('createBtn').addEventListener('click', async ()=>{
+  try{
+    const res = await fetch('/api/games', { method:'POST' });
+    if(!res.ok) throw new Error('対局の作成に失敗しました');
+    const state = await res.json();
+    location.href = `game.html?id=${state.id}`;
+  }catch(e){
+    showError(e.message);
+  }
+});
+
+document.getElementById('joinBtn').addEventListener('click', ()=>{
+  const id = document.getElementById('joinId').value.trim().toUpperCase();
+  if(!id){ showError('対局IDを入力してください。'); return; }
+  location.href = `game.html?id=${encodeURIComponent(id)}`;
+});
+
+document.getElementById('joinId').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter') document.getElementById('joinBtn').click();
+});
+</script>
+</body>
+</html>
