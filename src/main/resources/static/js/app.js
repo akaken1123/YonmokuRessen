@@ -45,7 +45,9 @@
     try{
       const res = await fetch(`/api/games/${gameId}/reset`, { method:'POST' });
       if(!res.ok) throw await errorFrom(res);
-      // 実際の描画は、この直後に届くWebSocket配信に任せる（複数手ジャンプによる演出の乱れを避けるため）。
+      const state = await res.json();
+      // WebSocket配信でも同じ状態が届くが、接続が途切れている場合の保険として自分の応答からも描画する。
+      renderWithTransition(state);
     }catch(e){
       showError(e.message || '通信エラーが発生しました。');
     }
@@ -71,7 +73,11 @@
         body: JSON.stringify({ row:r, col:c })
       });
       if(!res.ok) throw await errorFrom(res);
-      // 実際の描画は、この直後に届くWebSocket配信に任せる（AIの着手も含めて1手ずつ演出するため）。
+      const state = await res.json();
+      // WebSocket配信でも同じ状態が届く（AIの着手を1手ずつ演出するため、通常はそちらが先に反映される）。
+      // ただし接続が途切れている等でWebSocketが届かない場合に画面が固まったままにならないよう、
+      // 自分の操作の応答からも同じ経路で描画しておく（renderWithTransitionは重複呼び出しに対して安全）。
+      renderWithTransition(state);
     }catch(e){
       showError(e.message || '通信エラーが発生しました。');
     }
@@ -249,13 +255,20 @@
     return { removed, placed, hpLoss, pendingJustCreated, wasReset };
   }
 
-  /** WebSocketで届いた新状態を、直前の状態との差分に応じて演出しながら描画する。 */
+  /**
+   * WebSocketで届いた新状態を、直前の状態との差分に応じて演出しながら描画する。
+   * 自分の操作の応答（fetch）とWebSocket配信の両方から同じ状態が届くことがあるため、
+   * 手数（plyCount）が直前と変わっていなければ何もしない（重複描画・演出の二重再生を防ぐ）。
+   */
   function renderWithTransition(newState){
     errorBox.innerHTML = '';
     const oldState = previousState;
     if(!oldState){
       render(newState);
       previousState = newState;
+      return;
+    }
+    if(newState.plyCount === oldState.plyCount && newState.gameOver === oldState.gameOver){
       return;
     }
 
