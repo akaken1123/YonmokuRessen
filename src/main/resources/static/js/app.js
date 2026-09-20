@@ -9,6 +9,7 @@
   const boardEl = document.getElementById('board');
   const logEl = document.getElementById('log');
   const winnerBanner = document.getElementById('winnerBanner');
+  const aiBadge = document.getElementById('aiBadge');
 
   function showError(msg){
     errorBox.innerHTML = `<div class="error-box">${msg}</div>`;
@@ -118,7 +119,8 @@
             cell.classList.add('mark-echo');
             if(removalEchoes[k]) cell.classList.add('was-dmg');
           }
-          if(state.gameOver){
+          const aiTurn = state.aiEnabled && state.currentPlayer === state.aiColor;
+          if(state.gameOver || aiTurn){
             cell.classList.add('disabled');
           } else {
             const ghost = document.createElement('div');
@@ -136,8 +138,17 @@
     document.getElementById('hpBarB').innerHTML = hpPips(state, 'B');
     document.getElementById('hpBarW').innerHTML = hpPips(state, 'W');
 
+    if(state.aiEnabled){
+      aiBadge.style.display = '';
+      aiBadge.textContent = `🤖 AI対戦モード（AI：${colorName(state.aiColor)}）`;
+    } else {
+      aiBadge.style.display = 'none';
+    }
+
     if(state.gameOver){
       statusEl.innerHTML = 'ゲーム終了。「最初から」で再戦できます。';
+    } else if(state.aiEnabled && state.currentPlayer === state.aiColor){
+      statusEl.innerHTML = `<span class="turn-of">🤖 AI思考中…</span>`;
     } else {
       const roundNo = Math.ceil((state.plyCount + 1) / 2);
       let s = `<span class="turn-of">${colorName(state.currentPlayer)}の手番</span>（${state.plyCount + 1}手目・${roundNo}巡目）`;

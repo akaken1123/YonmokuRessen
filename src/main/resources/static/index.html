@@ -25,6 +25,18 @@
   </div>
 
   <div class="lobby-card">
+    <h2>AIと対戦する</h2>
+    <p>1人でも遊べます。相手はこのアプリに内蔵されたAIです。自分の色を選んで始めてください。</p>
+    <div class="choice-row">
+      <label><input type="radio" name="aiHumanColor" value="B" checked> 自分は黒（先手）</label>
+      <label><input type="radio" name="aiHumanColor" value="W"> 自分は白（後手）</label>
+    </div>
+    <div class="controls" style="margin:0;">
+      <button class="primary" id="vsAiBtn">AIと対戦を始める</button>
+    </div>
+  </div>
+
+  <div class="lobby-card">
     <h2>対局に参加する</h2>
     <p>相手から共有された対局IDを入力してください。</p>
     <div class="join-row">
@@ -43,6 +55,19 @@ function showError(msg){
 document.getElementById('createBtn').addEventListener('click', async ()=>{
   try{
     const res = await fetch('/api/games', { method:'POST' });
+    if(!res.ok) throw new Error('対局の作成に失敗しました');
+    const state = await res.json();
+    location.href = `game.html?id=${state.id}`;
+  }catch(e){
+    showError(e.message);
+  }
+});
+
+document.getElementById('vsAiBtn').addEventListener('click', async ()=>{
+  try{
+    const humanColor = document.querySelector('input[name="aiHumanColor"]:checked').value;
+    const aiColor = humanColor === 'B' ? 'W' : 'B';
+    const res = await fetch(`/api/games?vsAi=true&aiColor=${aiColor}`, { method:'POST' });
     if(!res.ok) throw new Error('対局の作成に失敗しました');
     const state = await res.json();
     location.href = `game.html?id=${state.id}`;

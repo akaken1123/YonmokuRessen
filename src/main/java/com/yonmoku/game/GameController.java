@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -27,9 +28,13 @@ public class GameController {
     }
 
     @PostMapping
-    public GameStateSnapshot createGame() {
+    public GameStateSnapshot createGame(@RequestParam(name = "vsAi", defaultValue = "false") boolean vsAi,
+                                         @RequestParam(name = "aiColor", defaultValue = "W") String aiColor) {
         GameRoom room = gameService.createGame();
-        return room.snapshot();
+        if (vsAi) {
+            room.configureAi(true, normalizeColor(aiColor));
+        }
+        return resolveAiTurns(room);
     }
 
     @GetMapping("/{id}")
@@ -41,18 +46,39 @@ public class GameController {
     public GameStateSnapshot move(@PathVariable String id, @RequestBody MoveRequest request) {
         GameRoom room = gameService.getGame(id);
         room.placeStone(request.row(), request.col());
-        GameStateSnapshot snapshot = room.snapshot();
-        broadcast(id, snapshot);
-        return snapshot;
+        broadcast(id, room.snapshot());
+        return resolveAiTurns(room);
     }
 
     @PostMapping("/{id}/reset")
     public GameStateSnapshot reset(@PathVariable String id) {
         GameRoom room = gameService.getGame(id);
         room.reset();
-        GameStateSnapshot snapshot = room.snapshot();
-        broadcast(id, snapshot);
-        return snapshot;
+        broadcast(id, room.snapshot());
+        return resolveAiTurns(room);
+    }
+
+    private String normalizeColor(String color) {
+        String c = color == null ? "" : color.trim().toUpperCase();
+        return ("B".equals(c) || "W".equals(c)) ? c : "W";
+    }
+
+    /** AIの手番が続く限り、少し間を置きながら着手させてブロードキャストする。 */
+    private GameStateSnapshot resolveAiTurns(GameRoom room) {
+        GameStateSnapshot state = room.snapshot();
+        int guard = 0;
+        while (room.isAiTurn() && guard++ < 4) {
+            try {
+                Thread.sleep(450);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            room.playAiMove();
+            state = room.snapshot();
+            broadcast(room.getId(), state);
+        }
+        return state;
     }
 
     private void broadcast(String id, GameStateSnapshot snapshot) {

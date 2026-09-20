@@ -38,10 +38,31 @@ public final class GameRoom {
     private String winner;
     private Deque<String> log;
     private Instant lastActivity;
+    private boolean aiEnabled;
+    private String aiColor;
 
     public GameRoom(String id) {
         this.id = id;
         reset();
+    }
+
+    /** この対局をAI対戦にする（またはAI対戦をやめる）。resetをまたいで有効。 */
+    public synchronized void configureAi(boolean enabled, String color) {
+        aiEnabled = enabled;
+        aiColor = enabled ? color : null;
+    }
+
+    public synchronized boolean isAiTurn() {
+        return aiEnabled && !gameOver && aiColor != null && aiColor.equals(currentPlayer);
+    }
+
+    /** 現在AIの手番であれば、AIに着手させる。手番でなければ何もしない。 */
+    public synchronized void playAiMove() {
+        if (!isAiTurn()) return;
+        int[] move = GomokuAi.chooseMove(snapshot(), aiColor);
+        if (move != null) {
+            placeStone(move[0], move[1]);
+        }
     }
 
     public synchronized void reset() {
@@ -134,7 +155,8 @@ public final class GameRoom {
         }
     }
 
-    private RemovalResult computeRemoval(int r, int c, String color) {
+    /** 盤面の状態から除外を計算する（読み取り専用）。AIの先読みシミュレーションからも呼ばれる。 */
+    static RemovalResult computeRemoval(Stone[][] board, int r, int c, String color) {
         Set<String> unionCells = new LinkedHashSet<>();
         for (int[] d : DIRS) {
             int dr = d[0], dc = d[1];
@@ -218,7 +240,7 @@ public final class GameRoom {
         }
         board[r][c] = new Stone(color, dmgFlag, backAttackBonus);
 
-        RemovalResult removalResult = computeRemoval(r, c, color);
+        RemovalResult removalResult = computeRemoval(board, r, c, color);
         if (removalResult != null) {
             applyRemoval(removalResult);
         }
@@ -335,7 +357,9 @@ public final class GameRoom {
                 gameOver,
                 winner,
                 plyCount,
-                logCopy
+                logCopy,
+                aiEnabled,
+                aiColor
         );
     }
 }

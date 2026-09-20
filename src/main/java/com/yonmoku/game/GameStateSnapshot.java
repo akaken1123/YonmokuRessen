@@ -17,6 +17,8 @@ public record GameStateSnapshot(
         boolean gameOver,
         String winner,
         int plyCount,
-        List<String> log
+        List<String> log,
+        boolean aiEnabled,
+        String aiColor
 ) {
 }
