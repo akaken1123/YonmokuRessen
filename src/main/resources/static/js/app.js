@@ -18,6 +18,44 @@
   // 除外演出中は previousState の更新が480ms後まで遅れるため、それより先に同期的に
   // 更新できる「直近に処理を開始した状態」のキーを別途持ち、重複処理を防ぐ。
   let lastHandledStateKey = null;
+  // WebSocketの瞬断や、想定していない例外等によって「AIの手番」表示のまま画面が
+  // 固まってしまうことがある（サーバー側は正常に着手済みで、再読み込みすれば直る）。
+  // それを自動化するため、AIの手番が一定時間続いたらサーバーへ最新状態を問い合わせて
+  // 強制的に描画し直すウォッチドッグを設ける。
+  const AI_WATCHDOG_MS = 3000;
+  let aiWatchdogTimer = null;
+
+  function clearAiWatchdog(){
+    if(aiWatchdogTimer){
+      clearTimeout(aiWatchdogTimer);
+      aiWatchdogTimer = null;
+    }
+  }
+
+  function scheduleAiWatchdog(state){
+    clearAiWatchdog();
+    if(state && state.aiEnabled && !state.gameOver && state.currentPlayer === state.aiColor){
+      aiWatchdogTimer = setTimeout(async ()=>{
+        try{
+          const res = await fetch(`/api/games/${gameId}`);
+          if(res.ok){
+            const fresh = await res.json();
+            // 手数が変わっていなければ強制的に再描画できるよう、重複判定キーを一旦クリアする。
+            lastHandledStateKey = null;
+            renderWithTransition(fresh);
+          }
+        }catch(e){
+          // 失敗しても次のウォッチドッグや操作で再試行されるため、ここでは何もしない。
+        }
+      }, AI_WATCHDOG_MS);
+    }
+  }
+
+  /** previousStateの更新と、AIの手番が固まっていないかのウォッチドッグ再設定をまとめて行う。 */
+  function finishRender(state){
+    previousState = state;
+    scheduleAiWatchdog(state);
+  }
 
   function showError(msg){
     errorBox.innerHTML = `<div class="error-box">${msg}</div>`;
@@ -289,56 +327,68 @@
     const oldState = previousState;
     if(!oldState){
       render(newState);
-      previousState = newState;
+      finishRender(newState);
       return;
     }
 
-    const diff = computeDiff(oldState, newState);
+    try{
+      const diff = computeDiff(oldState, newState);
 
-    if(diff.wasReset){
-      renderBoard(newState);
-      renderMeta(newState, { pendingJustCreated: diff.pendingJustCreated });
-      previousState = newState;
-      return;
-    }
+      if(diff.wasReset){
+        renderBoard(newState);
+        renderMeta(newState, { pendingJustCreated: diff.pendingJustCreated });
+        finishRender(newState);
+        return;
+      }
 
-    const placedClass = placedCellClass(diff.placed);
+      const placedClass = placedCellClass(diff.placed);
 
-    if(diff.removed.length === 0){
+      if(diff.removed.length === 0){
+        const extraClasses = {};
+        if(placedClass) extraClasses[key(diff.placed.r, diff.placed.c)] = placedClass;
+        renderBoard(newState, { extraClasses });
+        renderMeta(newState, { justLost: diff.hpLoss, pendingJustCreated: diff.pendingJustCreated });
+        if(placedClass && placedClass.indexOf('back-attack-flash') === 0) Sfx.backAttack();
+        else if(diff.placed) Sfx.place();
+        if(diff.pendingJustCreated) Sfx.pendingCreated();
+        playDamageSfx(diff.hpLoss);
+        if(newState.gameOver && !oldState.gameOver) playGameEndSfx(newState);
+        finishRender(newState);
+        return;
+      }
+
+      // 除外が発生：まず新しい石を含む盤面を、消える石だけ復元して「消滅演出」付きで表示する。
+      const boardOverride = newState.board.map(row => row.slice());
       const extraClasses = {};
+      for(const { r, c, stone } of diff.removed){
+        boardOverride[r][c] = stone;
+        extraClasses[key(r,c)] = 'removing';
+      }
       if(placedClass) extraClasses[key(diff.placed.r, diff.placed.c)] = placedClass;
-      renderBoard(newState, { extraClasses });
-      renderMeta(newState, { justLost: diff.hpLoss, pendingJustCreated: diff.pendingJustCreated });
-      if(placedClass && placedClass.indexOf('back-attack-flash') === 0) Sfx.backAttack();
-      else if(diff.placed) Sfx.place();
+
+      renderBoard(newState, { boardOverride, interactive: false, extraClasses });
+      renderMeta(oldState, { pendingJustCreated: false });
+      Sfx.remove();
       if(diff.pendingJustCreated) Sfx.pendingCreated();
-      playDamageSfx(diff.hpLoss);
-      if(newState.gameOver && !oldState.gameOver) playGameEndSfx(newState);
-      previousState = newState;
-      return;
+
+      setTimeout(()=>{
+        // 除外演出の完了処理。ここで例外が起きると previousState が更新されず
+        // 画面が固まってしまうため、必ず finishRender まで到達するようtry/finallyで守る。
+        try{
+          renderBoard(newState);
+          renderMeta(newState, { justLost: diff.hpLoss, pendingJustCreated: diff.pendingJustCreated });
+          playDamageSfx(diff.hpLoss);
+          if(newState.gameOver && !oldState.gameOver) playGameEndSfx(newState);
+        }catch(e){
+          console.error('除外演出の完了処理でエラー', e);
+        }finally{
+          finishRender(newState);
+        }
+      }, REMOVAL_ANIM_MS);
+    }catch(e){
+      console.error('描画処理でエラー', e);
+      finishRender(newState);
     }
-
-    // 除外が発生：まず新しい石を含む盤面を、消える石だけ復元して「消滅演出」付きで表示する。
-    const boardOverride = newState.board.map(row => row.slice());
-    const extraClasses = {};
-    for(const { r, c, stone } of diff.removed){
-      boardOverride[r][c] = stone;
-      extraClasses[key(r,c)] = 'removing';
-    }
-    if(placedClass) extraClasses[key(diff.placed.r, diff.placed.c)] = placedClass;
-
-    renderBoard(newState, { boardOverride, interactive: false, extraClasses });
-    renderMeta(oldState, { pendingJustCreated: false });
-    Sfx.remove();
-    if(diff.pendingJustCreated) Sfx.pendingCreated();
-
-    setTimeout(()=>{
-      renderBoard(newState);
-      renderMeta(newState, { justLost: diff.hpLoss, pendingJustCreated: diff.pendingJustCreated });
-      playDamageSfx(diff.hpLoss);
-      if(newState.gameOver && !oldState.gameOver) playGameEndSfx(newState);
-      previousState = newState;
-    }, REMOVAL_ANIM_MS);
   }
 
   function playDamageSfx(hpLoss){
@@ -365,7 +415,7 @@
       if(!res.ok) throw await errorFrom(res);
       const state = await res.json();
       render(state);
-      previousState = state;
+      finishRender(state);
     }catch(e){
       showError(`対局が見つかりませんでした。IDをご確認のうえ、<a href="index.html">ロビー</a>からやり直してください。`);
       statusEl.textContent = '';
