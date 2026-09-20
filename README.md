@@ -22,14 +22,34 @@
 4. 手番の色を打つ側が、それぞれの端末から盤面をクリック／タップして対局します（サーバーが手番を管理するため、
    誤った手番でのクリックはエラーになります）。
 
+## 事前準備
+
+- Java 17以上（JDK）がインストールされていること。
+  - 確認：`java -version`
+  - 未インストールの場合は [Adoptium Temurin](https://adoptium.net/) などからJDK 17以上を入れてください。
+- Maven自体のインストールは不要です。リポジトリに同梱されているMaven Wrapper（`mvnw` / `mvnw.cmd`）が、
+  初回実行時に必要なMavenを自動でダウンロードして使います。
+
 ## ビルド・起動方法
 
+**Windows（コマンドプロンプト / PowerShell）**
+
+```powershell
+.\mvnw.cmd clean package
+java -jar target\hp-gomoku-1.0.0.jar
+```
+
+**macOS / Linux**
+
 ```bash
-mvn clean package
+./mvnw clean package
 java -jar target/hp-gomoku-1.0.0.jar
 ```
 
-デフォルトでは `8080` 番ポートで起動します（`PORT` 環境変数で変更可能）。
+（Mavenを別途インストール済みで`mvn`コマンドが使える場合は、`mvnw`の代わりに`mvn`でも構いません。）
+
+デフォルトでは `8080` 番ポートで起動します（`PORT` 環境変数で変更可能）。「Port 8080 was already in use」と
+表示された場合は、既に起動中の別プロセスが8080番を使っているので、そちらを終了してから再実行してください。
 
 ## ルール概要
 
