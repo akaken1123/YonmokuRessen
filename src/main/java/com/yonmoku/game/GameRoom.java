@@ -197,7 +197,8 @@ public final class GameRoom {
                 new ArrayList<>(unionCells));
     }
 
-    private void applyRemoval(RemovalResult result) {
+    /** 除外された石を盤面から取り除き、跡地に除外あとマークを残す（読み取り専用ではなく board/removalEchoes を変更する）。 */
+    static void applyRemoval(Stone[][] board, Map<String, Boolean> removalEchoes, RemovalResult result) {
         for (String k : result.cells()) {
             String[] parts = k.split(",");
             int rr = Integer.parseInt(parts[0]);
@@ -206,6 +207,64 @@ public final class GameRoom {
             board[rr][cc] = null;
             removalEchoes.put(k, wasDmg);
         }
+    }
+
+    /**
+     * 1回の着手（除外・保留ダメージ・相殺・バックアタック）の核となる状態遷移。
+     * ログ整形やplyCount・マーク設置タイミングなどの周辺処理を含まない、盤面と数値だけの純粋な処理。
+     * 実際の対局（このメソッドの呼び出し元 placeStone）とAIの先読みシミュレーションの両方から使われる。
+     */
+    static MoveResolution resolveMove(Stone[][] board, Set<String> dmgMarks, Map<String, Boolean> removalEchoes,
+                                       Map<String, Integer> hp, Pending pendingBefore, int r, int c, String color) {
+        String k = key(r, c);
+        boolean dmgFlag = false;
+        int backAttackBonus = 0;
+        if (dmgMarks.contains(k)) {
+            dmgFlag = true;
+            dmgMarks.remove(k);
+        }
+        if (removalEchoes.containsKey(k)) {
+            backAttackBonus = Boolean.TRUE.equals(removalEchoes.get(k)) ? 2 : 1;
+            removalEchoes.remove(k);
+        }
+        board[r][c] = new Stone(color, dmgFlag, backAttackBonus);
+
+        RemovalResult removalResult = computeRemoval(board, r, c, color);
+        if (removalResult != null) {
+            applyRemoval(board, removalEchoes, removalResult);
+        }
+
+        Pending pendingAfter = pendingBefore;
+        String damagedColor = null;
+        int damageAmount = 0;
+
+        if (pendingBefore != null && pendingBefore.target().equals(color)) {
+            if (removalResult != null) {
+                int diff = pendingBefore.amount() - removalResult.total();
+                if (diff > 0) {
+                    damagedColor = color;
+                    damageAmount = diff;
+                } else if (diff < 0) {
+                    damagedColor = pendingBefore.source();
+                    damageAmount = -diff;
+                }
+            } else if (backAttackBonus > 0) {
+                damagedColor = color;
+                damageAmount = Math.max(0, pendingBefore.amount() - 1);
+            } else {
+                damagedColor = color;
+                damageAmount = pendingBefore.amount();
+            }
+            pendingAfter = null;
+            removalEchoes.clear();
+            if (damageAmount > 0) {
+                hp.put(damagedColor, hp.get(damagedColor) - damageAmount);
+            }
+        } else if (removalResult != null) {
+            pendingAfter = new Pending(color, opponent(color), removalResult.total());
+        }
+
+        return new MoveResolution(removalResult, pendingAfter, damagedColor, damageAmount, dmgFlag, backAttackBonus);
     }
 
     /**
@@ -227,71 +286,35 @@ public final class GameRoom {
 
         lastActivity = Instant.now();
         String color = currentPlayer;
-        String k = key(r, c);
-        boolean dmgFlag = false;
-        int backAttackBonus = 0;
-        if (dmgMarks.contains(k)) {
-            dmgFlag = true;
-            dmgMarks.remove(k);
-        }
-        if (removalEchoes.containsKey(k)) {
-            backAttackBonus = Boolean.TRUE.equals(removalEchoes.get(k)) ? 2 : 1;
-            removalEchoes.remove(k);
-        }
-        board[r][c] = new Stone(color, dmgFlag, backAttackBonus);
-
-        RemovalResult removalResult = computeRemoval(board, r, c, color);
-        if (removalResult != null) {
-            applyRemoval(removalResult);
-        }
+        Pending pendingBefore = pending;
+        MoveResolution res = resolveMove(board, dmgMarks, removalEchoes, hp, pendingBefore, r, c, color);
+        pending = res.pendingAfter();
 
         StringBuilder msg = new StringBuilder(colorName(color) + " が " + posLabel(r, c) + " に着手。");
 
-        if (pending != null && pending.target().equals(color)) {
+        if (pendingBefore != null && pendingBefore.target().equals(color)) {
+            RemovalResult removalResult = res.removalResult();
             if (removalResult != null) {
-                int a = pending.amount();
-                int b = removalResult.total();
-                int diff = a - b;
-                int dmg = 0;
-                String dmgTarget = null;
-                if (diff > 0) {
-                    dmg = diff;
-                    dmgTarget = color;
-                } else if (diff < 0) {
-                    dmg = -diff;
-                    dmgTarget = pending.source();
-                }
                 String bonusNote = (removalResult.dmgBonus() + removalResult.backBonus()) > 0
                         ? "(基本" + removalResult.baseCount() + "+マーク" + (removalResult.dmgBonus() + removalResult.backBonus()) + ")"
                         : "";
-                msg.append(" 相殺判定：反撃").append(b).append("点").append(bonusNote)
-                        .append(" vs 保留").append(a).append("点 → ");
-                if (dmg > 0) {
-                    hp.put(dmgTarget, hp.get(dmgTarget) - dmg);
-                    msg.append(colorName(dmgTarget)).append("に").append(dmg).append("ダメージ。");
+                msg.append(" 相殺判定：反撃").append(removalResult.total()).append("点").append(bonusNote)
+                        .append(" vs 保留").append(pendingBefore.amount()).append("点 → ");
+                if (res.damageAmount() > 0) {
+                    msg.append(colorName(res.damagedColor())).append("に").append(res.damageAmount()).append("ダメージ。");
                 } else {
                     msg.append("完全相殺・ダメージ0。");
                 }
-                pending = null;
-                removalEchoes.clear();
-            } else if (backAttackBonus > 0) {
-                int dmg = Math.max(0, pending.amount() - 1);
-                msg.append(" バックアタック成立（軽減1点）。保留").append(pending.amount())
-                        .append("点 → ").append(colorName(color)).append("に").append(dmg).append("ダメージ。");
-                if (dmg > 0) hp.put(color, hp.get(color) - dmg);
-                pending = null;
-                removalEchoes.clear();
+            } else if (res.backAttackBonus() > 0) {
+                msg.append(" バックアタック成立（軽減1点）。保留").append(pendingBefore.amount())
+                        .append("点 → ").append(colorName(color)).append("に").append(res.damageAmount()).append("ダメージ。");
             } else {
-                int dmg = pending.amount();
-                msg.append(" 反撃なし。保留していた").append(dmg).append("ダメージが")
+                msg.append(" 反撃なし。保留していた").append(res.damageAmount()).append("ダメージが")
                         .append(colorName(color)).append("に確定。");
-                if (dmg > 0) hp.put(color, hp.get(color) - dmg);
-                pending = null;
-                removalEchoes.clear();
             }
-        } else if (removalResult != null) {
+        } else if (res.removalResult() != null) {
+            RemovalResult removalResult = res.removalResult();
             String opp = opponent(color);
-            pending = new Pending(color, opp, removalResult.total());
             String bonusNote = (removalResult.dmgBonus() + removalResult.backBonus()) > 0
                     ? "(基本" + removalResult.baseCount() + "+マーク" + (removalResult.dmgBonus() + removalResult.backBonus()) + ")"
                     : "";

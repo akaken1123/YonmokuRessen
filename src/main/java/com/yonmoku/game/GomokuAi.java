@@ -1,65 +1,52 @@
 package com.yonmoku.game;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 内蔵AI。深い読み（ミニマックス探索等）は行わず、1手先の除外シミュレーションと
- * 盤面のヒューリスティック評価だけで着手を選ぶ、対人戦の代役として遊べる程度の強さのAI。
+ * 内蔵AI。2手先（自分の着手 → 相手の最善応手）までを読む簡易ミニマックス探索で着手を選ぶ。
+ * 判断基準は主に2つ：
+ *  1. 相手が取れる最善の応手を仮定し、その結果できるだけ被ダメージが少ない（できれば逆転できる）手を選ぶ。
+ *  2. 相殺・除外の応酬が終わったタイミングの盤面（残りの石の配置）が自分に有利かを評価する。
+ * 深い探索木を全展開すると重いため、各手番ではヒューリスティックで有望な候補手だけに絞り込んで探索する。
  */
 final class GomokuAi {
 
     private static final int[][] DIRS = {{0, 1}, {1, 0}, {1, 1}, {1, -1}};
+    private static final int TOP_LEVEL_CANDIDATES = 14;
+    private static final int RESPONSE_CANDIDATES = 10;
 
     private GomokuAi() {
     }
 
     static int[] chooseMove(GameStateSnapshot state, String aiColor) {
-        Stone[][] board = state.board();
-        int size = state.size();
-        List<int[]> empties = new ArrayList<>();
-        for (int r = 0; r < size; r++) {
-            for (int c = 0; c < size; c++) {
-                if (board[r][c] == null) empties.add(new int[]{r, c});
-            }
-        }
-        if (empties.isEmpty()) return null;
+        SimState root = SimState.fromSnapshot(state);
+        String opponent = other(aiColor);
 
-        Set<String> dmgMarks = state.dmgMarks();
-        Map<String, Boolean> removalEchoes = state.removalEchoes();
-        Pending pending = state.pending();
+        List<int[]> myCandidates = rankedCandidates(root, aiColor, opponent, TOP_LEVEL_CANDIDATES);
+        if (myCandidates.isEmpty()) return null;
 
-        if (pending != null) {
-            return chooseResponseToPending(board, dmgMarks, removalEchoes, pending, aiColor, empties);
-        }
-        return chooseOffenseOrDefense(board, dmgMarks, removalEchoes, aiColor, empties);
-    }
-
-    /** 保留ダメージがAI宛てになっている状態での応手。反撃・バックアタックで被害を最小化（できれば逆転）する。 */
-    private static int[] chooseResponseToPending(Stone[][] board, Set<String> dmgMarks,
-                                                  Map<String, Boolean> removalEchoes, Pending pending,
-                                                  String aiColor, List<int[]> empties) {
-        int pendingAmount = pending.amount();
         double bestValue = Double.NEGATIVE_INFINITY;
         List<int[]> best = new ArrayList<>();
 
-        for (int[] cell : empties) {
-            int r = cell[0], c = cell[1];
-            String k = key(r, c);
-            RemovalResult rr = simulateRemoval(board, dmgMarks, removalEchoes, r, c, aiColor);
+        for (int[] cell : myCandidates) {
+            SimState afterMine = root.copy();
+            applyMove(afterMine, cell[0], cell[1], aiColor);
+
             double value;
-            if (rr != null) {
-                value = rr.total() - pendingAmount;
-            } else if (removalEchoes.containsKey(k)) {
-                value = -Math.max(0, pendingAmount - 1);
+            if (afterMine.gameOver) {
+                value = terminalValue(afterMine, aiColor, opponent);
             } else {
-                value = -pendingAmount;
+                value = worstCaseAfterOpponentResponse(afterMine, aiColor, opponent);
             }
-            value += heuristicScore(board, dmgMarks, removalEchoes, r, c, aiColor) * 0.01;
-            value += ThreadLocalRandom.current().nextDouble() * 0.001;
+            value += ThreadLocalRandom.current().nextDouble() * 0.01;
+
             if (value > bestValue) {
                 bestValue = value;
                 best.clear();
@@ -68,64 +55,127 @@ final class GomokuAi {
                 best.add(cell);
             }
         }
-        return pickRandom(best);
+        return best.get(ThreadLocalRandom.current().nextInt(best.size()));
     }
 
-    /** 保留がない通常局面：自分が除外できるなら攻撃、相手の除外を防げるなら防御、それ以外は形勢評価。 */
-    private static int[] chooseOffenseOrDefense(Stone[][] board, Set<String> dmgMarks,
-                                                 Map<String, Boolean> removalEchoes, String aiColor,
-                                                 List<int[]> empties) {
-        String opponent = "B".equals(aiColor) ? "W" : "B";
-
-        int[] bestAttack = null;
-        int bestAttackTotal = -1;
-        for (int[] cell : empties) {
-            RemovalResult rr = simulateRemoval(board, dmgMarks, removalEchoes, cell[0], cell[1], aiColor);
-            if (rr != null && rr.total() > bestAttackTotal) {
-                bestAttackTotal = rr.total();
-                bestAttack = cell;
-            }
+    /** 相手が最も自分に不利な応手を選ぶと仮定し、その中での最悪値（＝相手の最善応手後の局面価値）を返す。 */
+    private static double worstCaseAfterOpponentResponse(SimState afterMine, String aiColor, String opponent) {
+        List<int[]> responses = rankedCandidates(afterMine, opponent, aiColor, RESPONSE_CANDIDATES);
+        if (responses.isEmpty()) {
+            return evaluate(afterMine, aiColor, opponent);
         }
-        if (bestAttack != null) return bestAttack;
-
-        int[] bestBlock = null;
-        int bestBlockTotal = -1;
-        for (int[] cell : empties) {
-            RemovalResult rr = simulateRemoval(board, dmgMarks, removalEchoes, cell[0], cell[1], opponent);
-            if (rr != null && rr.total() > bestBlockTotal) {
-                bestBlockTotal = rr.total();
-                bestBlock = cell;
-            }
+        double worst = Double.POSITIVE_INFINITY;
+        for (int[] cell : responses) {
+            SimState afterResponse = afterMine.copy();
+            applyMove(afterResponse, cell[0], cell[1], opponent);
+            double value = afterResponse.gameOver
+                    ? terminalValue(afterResponse, aiColor, opponent)
+                    : evaluate(afterResponse, aiColor, opponent);
+            worst = Math.min(worst, value);
         }
-        if (bestBlock != null) return bestBlock;
-
-        double bestScore = Double.NEGATIVE_INFINITY;
-        List<int[]> best = new ArrayList<>();
-        for (int[] cell : empties) {
-            double score = heuristicScore(board, dmgMarks, removalEchoes, cell[0], cell[1], aiColor)
-                    - 0.6 * heuristicScore(board, dmgMarks, removalEchoes, cell[0], cell[1], opponent)
-                    + ThreadLocalRandom.current().nextDouble() * 0.5;
-            if (score > bestScore) {
-                bestScore = score;
-                best.clear();
-                best.add(cell);
-            } else if (score == bestScore) {
-                best.add(cell);
-            }
-        }
-        return pickRandom(best);
+        return worst;
     }
 
-    private static RemovalResult simulateRemoval(Stone[][] board, Set<String> dmgMarks,
-                                                  Map<String, Boolean> removalEchoes, int r, int c, String color) {
+    private static double terminalValue(SimState s, String aiColor, String opponent) {
+        if (aiColor.equals(s.winner)) return 1_000_000;
+        if (opponent.equals(s.winner)) return -1_000_000;
+        return 0;
+    }
+
+    private static void applyMove(SimState s, int r, int c, String color) {
+        MoveResolution res = GameRoom.resolveMove(s.board, s.dmgMarks, s.removalEchoes, s.hp, s.pending, r, c, color);
+        s.pending = res.pendingAfter();
+        if (s.hp.get("B") <= 0 && s.hp.get("W") <= 0) {
+            s.gameOver = true;
+            s.winner = "draw";
+        } else if (s.hp.get("B") <= 0) {
+            s.gameOver = true;
+            s.winner = "W";
+        } else if (s.hp.get("W") <= 0) {
+            s.gameOver = true;
+            s.winner = "B";
+        }
+    }
+
+    /**
+     * 有望な候補手を絞り込む。「自分が除外を起こせる手」「相手が除外を起こせてしまう手（＝要ブロック）」は
+     * ヒューリスティックの順位に関わらず必ず候補に含め、残り枠をcellFor視点のヒューリスティックで埋める。
+     */
+    private static List<int[]> rankedCandidates(SimState s, String cellFor, String against, int limit) {
+        List<int[]> empties = emptyCells(s.board);
+        if (empties.size() <= limit) return empties;
+
+        List<int[]> forced = new ArrayList<>();
+        Set<String> forcedKeys = new HashSet<>();
+        for (int[] cell : empties) {
+            boolean critical = wouldRemove(s.board, cell[0], cell[1], cellFor)
+                    || wouldRemove(s.board, cell[0], cell[1], against);
+            if (critical) {
+                forced.add(cell);
+                forcedKeys.add(key(cell[0], cell[1]));
+            }
+        }
+
+        List<int[]> rest = new ArrayList<>();
+        for (int[] cell : empties) {
+            if (!forcedKeys.contains(key(cell[0], cell[1]))) rest.add(cell);
+        }
+        rest.sort(Comparator.comparingDouble(
+                (int[] cell) -> heuristicScore(s.board, s.dmgMarks, s.removalEchoes, cell[0], cell[1], cellFor)
+                        + heuristicScore(s.board, s.dmgMarks, s.removalEchoes, cell[0], cell[1], against)
+        ).reversed());
+
+        List<int[]> result = new ArrayList<>(forced);
+        for (int[] cell : rest) {
+            if (result.size() >= limit) break;
+            result.add(cell);
+        }
+        return result;
+    }
+
+    /** (r,c)に color の石を置いた場合に、除外（4つ以上並び）が発生するかどうかだけを判定する軽量チェック。 */
+    private static boolean wouldRemove(Stone[][] board, int r, int c, String color) {
         int size = board.length;
         Stone[][] copy = new Stone[size][];
         for (int i = 0; i < size; i++) copy[i] = board[i].clone();
-        String k = key(r, c);
-        boolean dmgFlag = dmgMarks.contains(k);
-        int backAttackBonus = removalEchoes.containsKey(k) ? (Boolean.TRUE.equals(removalEchoes.get(k)) ? 2 : 1) : 0;
-        copy[r][c] = new Stone(color, dmgFlag, backAttackBonus);
-        return GameRoom.computeRemoval(copy, r, c, color);
+        copy[r][c] = new Stone(color, false, 0);
+        return GameRoom.computeRemoval(copy, r, c, color) != null;
+    }
+
+    private static List<int[]> emptyCells(Stone[][] board) {
+        List<int[]> empties = new ArrayList<>();
+        for (int r = 0; r < board.length; r++) {
+            for (int c = 0; c < board.length; c++) {
+                if (board[r][c] == null) empties.add(new int[]{r, c});
+            }
+        }
+        return empties;
+    }
+
+    /**
+     * ある局面（すでに次の一手が終わった後）の、AI視点での価値。
+     * HPの差分を主軸に、保留ダメージが残っていれば「次の手番でほぼ確定するダメージ」として見込み、
+     * 残りの石の配置（ライン形成のポテンシャル）を軽めに加味する。
+     */
+    private static double evaluate(SimState s, String aiColor, String opponent) {
+        double value = (s.hp.get(aiColor) - s.hp.get(opponent)) * 50.0;
+
+        if (s.pending != null) {
+            double expected = s.pending.amount() * 8.0;
+            value += s.pending.target().equals(aiColor) ? -expected : expected;
+        }
+
+        double boardScore = 0;
+        for (int r = 0; r < s.board.length; r++) {
+            for (int c = 0; c < s.board.length; c++) {
+                if (s.board[r][c] == null) {
+                    boardScore += heuristicScore(s.board, s.dmgMarks, s.removalEchoes, r, c, aiColor);
+                    boardScore -= heuristicScore(s.board, s.dmgMarks, s.removalEchoes, r, c, opponent);
+                }
+            }
+        }
+        value += boardScore * 0.02;
+        return value;
     }
 
     private static double heuristicScore(Stone[][] board, Set<String> dmgMarks, Map<String, Boolean> removalEchoes,
@@ -185,7 +235,50 @@ final class GomokuAi {
         return r + "," + c;
     }
 
-    private static int[] pickRandom(List<int[]> cells) {
-        return cells.get(ThreadLocalRandom.current().nextInt(cells.size()));
+    private static String other(String color) {
+        return "B".equals(color) ? "W" : "B";
+    }
+
+    /** AIの先読み用に、対局の核となる状態だけを持つ可変コピー（ログ・巡数・マーク設置タイミングは含まない）。 */
+    private static final class SimState {
+        Stone[][] board;
+        Set<String> dmgMarks;
+        Map<String, Boolean> removalEchoes;
+        Map<String, Integer> hp;
+        Pending pending;
+        boolean gameOver;
+        String winner;
+
+        static SimState fromSnapshot(GameStateSnapshot state) {
+            SimState s = new SimState();
+            int size = state.size();
+            s.board = new Stone[size][];
+            for (int r = 0; r < size; r++) {
+                s.board[r] = state.board()[r].clone();
+            }
+            s.dmgMarks = new HashSet<>(state.dmgMarks());
+            s.removalEchoes = new HashMap<>(state.removalEchoes());
+            s.hp = new HashMap<>(state.hp());
+            s.pending = state.pending();
+            s.gameOver = state.gameOver();
+            s.winner = state.winner();
+            return s;
+        }
+
+        SimState copy() {
+            SimState s = new SimState();
+            int size = board.length;
+            s.board = new Stone[size][];
+            for (int r = 0; r < size; r++) {
+                s.board[r] = board[r].clone();
+            }
+            s.dmgMarks = new HashSet<>(dmgMarks);
+            s.removalEchoes = new HashMap<>(removalEchoes);
+            s.hp = new HashMap<>(hp);
+            s.pending = pending;
+            s.gameOver = gameOver;
+            s.winner = winner;
+            return s;
+        }
     }
 }
