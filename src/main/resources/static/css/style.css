@@ -191,6 +191,7 @@ h1{
   flex-wrap: wrap;
 }
 .hp-card{
+  position: relative;
   flex: 1 1 220px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
@@ -199,9 +200,36 @@ h1{
   display:flex;
   align-items:center;
   gap: 10px;
+  overflow: visible;
 }
 .hp-card.active{
   box-shadow: 0 0 0 2px var(--accent-gold);
+}
+.hp-card.hit{
+  animation: hpShake 0.4s ease-in-out;
+}
+@keyframes hpShake{
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+.dmg-float{
+  position: absolute;
+  top: -8px;
+  right: 12px;
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--accent-red);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  pointer-events: none;
+  animation: dmgFloat 0.9s ease-out forwards;
+}
+@keyframes dmgFloat{
+  0% { transform: translateY(0); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translateY(-28px); opacity: 0; }
 }
 .stone-badge{
   width: 26px; height:26px; border-radius:50%;
@@ -222,6 +250,13 @@ h1{
 }
 .hp-pip.filled.black{ background: linear-gradient(160deg,#555,#000); }
 .hp-pip.filled.white{ background: linear-gradient(160deg,#fff,#cfc6b4); }
+.hp-pip.just-lost{
+  animation: pipLost 0.5s ease-out forwards;
+}
+@keyframes pipLost{
+  0% { transform: scale(1.2); background: var(--accent-red); box-shadow: 0 0 6px rgba(184,73,47,0.8); }
+  100% { transform: scale(1); background: var(--hp-empty); box-shadow: none; }
+}
 
 .status{
   text-align:center;
@@ -235,6 +270,13 @@ h1{
 }
 .status .turn-of{ font-weight:700; }
 .status .pending{ color: var(--accent-red); font-weight: 700;}
+.status .pending.new{
+  animation: pendingPulse 0.9s ease-in-out 2;
+}
+@keyframes pendingPulse{
+  0%, 100% { text-shadow: none; }
+  50% { text-shadow: 0 0 8px rgba(184,73,47,0.9); }
+}
 
 .board-outer{
   background: linear-gradient(160deg, var(--board-wood-dark), var(--board-wood));
@@ -275,6 +317,59 @@ h1{
 }
 .stone.black{ background: radial-gradient(circle at 32% 28%, #4a4a4a, #050505); }
 .stone.white{ background: radial-gradient(circle at 32% 28%, #ffffff, #cdc4b2); border: 1px solid rgba(0,0,0,0.2); }
+/* 盤面は毎回まるごと再描画するため、ポップイン演出は「今置かれた石」のセルだけに限定する。
+   （全石に常時適用すると、無関係な手でも既存の石が毎回ポップし直してしまう） */
+.cell.just-placed .stone{
+  animation: stonePop 0.22s ease-out;
+}
+@keyframes stonePop{
+  0% { transform: scale(0.3); opacity: 0; }
+  65% { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* 除外（4つ以上並んで盤上から消える）演出 */
+.cell.removing{ z-index: 2; }
+.cell.removing::before{
+  content:"";
+  position:absolute;
+  inset: 0;
+  background: radial-gradient(circle, rgba(184,73,47,0.6), transparent 70%);
+  animation: removingFlashBg 0.48s ease-out forwards;
+  pointer-events:none;
+}
+.cell.removing .stone{
+  animation: stoneRemoving 0.48s ease-in forwards;
+}
+@keyframes removingFlashBg{
+  0% { opacity: 0; }
+  35% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes stoneRemoving{
+  0% { transform: scale(1) rotate(0deg); opacity: 1; filter: brightness(1); }
+  30% { transform: scale(1.18) rotate(-5deg); filter: brightness(1.7) drop-shadow(0 0 6px var(--accent-red)); }
+  100% { transform: scale(0.1) rotate(14deg); opacity: 0; filter: brightness(2); }
+}
+
+/* バックアタック成立演出 */
+.cell.back-attack-flash{ z-index: 2; }
+.cell.back-attack-flash .stone{
+  animation: stonePop 0.22s ease-out, backAttackPulse 0.7s ease-out;
+}
+.cell.back-attack-flash.was-dmg .stone{
+  animation: stonePop 0.22s ease-out, backAttackPulseBlue 0.7s ease-out;
+}
+@keyframes backAttackPulse{
+  0% { box-shadow: 0 0 0 0 rgba(212,165,61,0.9); }
+  70% { box-shadow: 0 0 0 16px rgba(212,165,61,0); }
+  100% { box-shadow: 0 0 0 0 rgba(212,165,61,0); }
+}
+@keyframes backAttackPulseBlue{
+  0% { box-shadow: 0 0 0 0 rgba(79,143,174,0.9); }
+  70% { box-shadow: 0 0 0 16px rgba(79,143,174,0); }
+  100% { box-shadow: 0 0 0 0 rgba(79,143,174,0); }
+}
 .ghost{
   width: 78%; height:78%; border-radius:50%;
   opacity:0;

@@ -19,6 +19,7 @@ public record GameStateSnapshot(
         int plyCount,
         List<String> log,
         boolean aiEnabled,
-        String aiColor
+        String aiColor,
+        LastMove lastMove
 ) {
 }

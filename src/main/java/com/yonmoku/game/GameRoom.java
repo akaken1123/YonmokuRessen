@@ -40,6 +40,7 @@ public final class GameRoom {
     private Instant lastActivity;
     private boolean aiEnabled;
     private String aiColor;
+    private LastMove lastMove;
 
     public GameRoom(String id) {
         this.id = id;
@@ -82,6 +83,7 @@ public final class GameRoom {
         winner = null;
         log = new ArrayDeque<>();
         lastActivity = Instant.now();
+        lastMove = null;
     }
 
     private static String opponent(String c) {
@@ -289,6 +291,8 @@ public final class GameRoom {
         Pending pendingBefore = pending;
         MoveResolution res = resolveMove(board, dmgMarks, removalEchoes, hp, pendingBefore, r, c, color);
         pending = res.pendingAfter();
+        lastMove = new LastMove(r, c, color,
+                res.removalResult() != null ? res.removalResult().cells() : List.of());
 
         StringBuilder msg = new StringBuilder(colorName(color) + " が " + posLabel(r, c) + " に着手。");
 
@@ -382,7 +386,8 @@ public final class GameRoom {
                 plyCount,
                 logCopy,
                 aiEnabled,
-                aiColor
+                aiColor,
+                lastMove
         );
     }
 }
