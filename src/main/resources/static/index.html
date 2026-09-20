@@ -46,6 +46,7 @@
   </div>
 </div>
 
+<script src="js/sfx.js"></script>
 <script>
 const errorBox = document.getElementById('errorBox');
 function showError(msg){
@@ -53,6 +54,8 @@ function showError(msg){
 }
 
 document.getElementById('createBtn').addEventListener('click', async ()=>{
+  Sfx.unlock();
+  Sfx.click();
   try{
     const res = await fetch('/api/games', { method:'POST' });
     if(!res.ok) throw new Error('対局の作成に失敗しました');
@@ -64,6 +67,8 @@ document.getElementById('createBtn').addEventListener('click', async ()=>{
 });
 
 document.getElementById('vsAiBtn').addEventListener('click', async ()=>{
+  Sfx.unlock();
+  Sfx.click();
   try{
     const humanColor = document.querySelector('input[name="aiHumanColor"]:checked').value;
     const aiColor = humanColor === 'B' ? 'W' : 'B';
@@ -77,6 +82,8 @@ document.getElementById('vsAiBtn').addEventListener('click', async ()=>{
 });
 
 document.getElementById('joinBtn').addEventListener('click', ()=>{
+  Sfx.unlock();
+  Sfx.click();
   const id = document.getElementById('joinId').value.trim().toUpperCase();
   if(!id){ showError('対局IDを入力してください。'); return; }
   location.href = `game.html?id=${encodeURIComponent(id)}`;

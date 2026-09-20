@@ -14,6 +14,10 @@
   const REMOVAL_ANIM_MS = 480;
 
   let previousState = null;
+  // 自分の操作の応答（fetch）とWebSocket配信が、ほぼ同時に同じ状態を届けることがある。
+  // 除外演出中は previousState の更新が480ms後まで遅れるため、それより先に同期的に
+  // 更新できる「直近に処理を開始した状態」のキーを別途持ち、重複処理を防ぐ。
+  let lastHandledStateKey = null;
 
   function showError(msg){
     errorBox.innerHTML = `<div class="error-box">${msg}</div>`;
@@ -27,6 +31,18 @@
 
   document.getElementById('roomIdLabel').textContent = gameId;
   roomBar.style.display = '';
+
+  const sfxToggleBtn = document.getElementById('sfxToggleBtn');
+  function updateSfxToggleLabel(){
+    sfxToggleBtn.textContent = Sfx.isMuted() ? '🔇' : '🔊';
+  }
+  updateSfxToggleLabel();
+  sfxToggleBtn.addEventListener('click', ()=>{
+    Sfx.unlock();
+    Sfx.setMuted(!Sfx.isMuted());
+    updateSfxToggleLabel();
+    if(!Sfx.isMuted()) Sfx.click();
+  });
 
   document.getElementById('copyLinkBtn').addEventListener('click', async ()=>{
     const link = `${location.origin}${location.pathname}?id=${gameId}`;
@@ -42,6 +58,8 @@
   });
 
   document.getElementById('resetBtn').addEventListener('click', async ()=>{
+    Sfx.unlock();
+    Sfx.click();
     try{
       const res = await fetch(`/api/games/${gameId}/reset`, { method:'POST' });
       if(!res.ok) throw await errorFrom(res);
@@ -131,7 +149,7 @@
         const ghost = document.createElement('div');
         ghost.className = 'ghost ' + (currentPlayer === 'B' ? 'black' : 'white');
         cell.appendChild(ghost);
-        cell.addEventListener('click', ()=>placeStone(r,c));
+        cell.addEventListener('click', ()=>{ Sfx.unlock(); placeStone(r,c); });
       }
     }
     return cell;
@@ -261,14 +279,17 @@
    * 手数（plyCount）が直前と変わっていなければ何もしない（重複描画・演出の二重再生を防ぐ）。
    */
   function renderWithTransition(newState){
+    const stateKey = newState.plyCount + ':' + (newState.gameOver ? 1 : 0);
+    if(stateKey === lastHandledStateKey){
+      return; // fetchとWebSocketがほぼ同時に同じ状態を届けた（除外演出の完了を待たずに次が来た）
+    }
+    lastHandledStateKey = stateKey;
+
     errorBox.innerHTML = '';
     const oldState = previousState;
     if(!oldState){
       render(newState);
       previousState = newState;
-      return;
-    }
-    if(newState.plyCount === oldState.plyCount && newState.gameOver === oldState.gameOver){
       return;
     }
 
@@ -288,6 +309,11 @@
       if(placedClass) extraClasses[key(diff.placed.r, diff.placed.c)] = placedClass;
       renderBoard(newState, { extraClasses });
       renderMeta(newState, { justLost: diff.hpLoss, pendingJustCreated: diff.pendingJustCreated });
+      if(placedClass && placedClass.indexOf('back-attack-flash') === 0) Sfx.backAttack();
+      else if(diff.placed) Sfx.place();
+      if(diff.pendingJustCreated) Sfx.pendingCreated();
+      playDamageSfx(diff.hpLoss);
+      if(newState.gameOver && !oldState.gameOver) playGameEndSfx(newState);
       previousState = newState;
       return;
     }
@@ -303,12 +329,26 @@
 
     renderBoard(newState, { boardOverride, interactive: false, extraClasses });
     renderMeta(oldState, { pendingJustCreated: false });
+    Sfx.remove();
+    if(diff.pendingJustCreated) Sfx.pendingCreated();
 
     setTimeout(()=>{
       renderBoard(newState);
       renderMeta(newState, { justLost: diff.hpLoss, pendingJustCreated: diff.pendingJustCreated });
+      playDamageSfx(diff.hpLoss);
+      if(newState.gameOver && !oldState.gameOver) playGameEndSfx(newState);
       previousState = newState;
     }, REMOVAL_ANIM_MS);
+  }
+
+  function playDamageSfx(hpLoss){
+    const amounts = Object.values(hpLoss || {});
+    if(amounts.length > 0) Sfx.damage(Math.max(...amounts));
+  }
+
+  function playGameEndSfx(state){
+    if(state.winner === 'draw') Sfx.draw();
+    else Sfx.victory();
   }
 
   function placedCellClass(placed){
