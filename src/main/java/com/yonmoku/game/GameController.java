@@ -31,7 +31,7 @@ public class GameController {
     }
 
     /**
-     * 対局を作成する。blackAi / whiteAi にレベル名（DEFAULT/TEST）を指定した色はAIが担当し、
+     * 対局を作成する。blackAi / whiteAi にレベル名（DEFAULT/TEST/TEST2）を指定した色はAIが担当し、
      * 省略した色は人間が操作する。両方指定すればAI対AI（観戦専用）になる。
      */
     @PostMapping

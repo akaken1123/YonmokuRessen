@@ -23,7 +23,7 @@ public final class GameRoom {
     private static final int[][] DIRS = {{0, 1}, {1, 0}, {1, 1}, {1, -1}};
     private static final int START_HP = 6;
     private static final int MARK_RADIUS = 3;
-    private static final int MARK_PER_SIDE_MAX = 3;
+    private static final int MARK_PER_SIDE_MAX = 16;
     private static final int MARK_GROWTH_EVERY_N_EVENTS = 3;
     private static final int MARK_EVENT_INTERVAL_PLIES = 8; // 4巡＝8手ごと
 

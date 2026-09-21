@@ -143,7 +143,11 @@
   function aiLevelFor(state, color){ return color === 'B' ? state.blackAiLevel : state.whiteAiLevel; }
   function isAiColor(state, color){ return !!aiLevelFor(state, color); }
   function isAiVsAi(state){ return isAiColor(state, 'B') && isAiColor(state, 'W'); }
-  function levelLabel(level){ return level === 'TEST' ? 'テストAI・3手先読み' : 'デフォルトAI・2手先読み'; }
+  function levelLabel(level){
+    if(level === 'TEST') return 'テストAI・3手先読み';
+    if(level === 'TEST2') return 'テスト2AI・5手先読み';
+    return 'デフォルトAI・2手先読み';
+  }
 
   async function placeStone(r,c){
     try{

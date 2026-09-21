@@ -10,39 +10,48 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 内蔵AI。自分の着手 → 相手の最善応手（DEFAULT: 2手先読み）、あるいはさらに自分の追撃まで
- * （TEST: 3手先読み）を読む簡易ミニマックス探索で着手を選ぶ。
+ * 内蔵AI。自分の着手 → 相手の最善応手（DEFAULT: 2手先読み）、あるいはさらに自分の追撃・相手の再応手まで
+ * （TEST: 3手先読み、TEST2: 5手先読み）を読む簡易ミニマックス探索で着手を選ぶ。
  * 判断基準は主に2つ：
  *  1. 相手が取れる最善の応手を仮定し、その結果できるだけ被ダメージが少ない（できれば逆転できる）手を選ぶ。
  *  2. 相殺・除外の応酬が終わったタイミングの盤面（残りの石の配置）が自分に有利かを評価する。
  * 深い探索木を全展開すると重いため、各手番ではヒューリスティックで有望な候補手だけに絞り込んで探索する。
  *
- * DEFAULT（2手先読み）は長く動かして調整してきた安定版。TEST（3手先読み）は追撃まで読む実験版で、
- * 候補手の絞り込みが深さ分だけ狭くなる（＝重要な手を見落とすリスクが上がる）ぶん、必ずしも
- * DEFAULTより強いとは限らない。新しい調整はまずTESTに入れ、十分比較してからDEFAULTに昇格させる。
+ * DEFAULT（2手先読み）は長く動かして調整してきた安定版。TEST（3手先読み）・TEST2（5手先読み）は
+ * さらに先まで読む実験版で、候補手の絞り込みが深さ分だけ狭くなる（＝重要な手を見落とすリスクが上がる）
+ * ぶん、必ずしもDEFAULTより強いとは限らない。新しい調整はまずTEST系に入れ、十分比較してからDEFAULTに
+ * 昇格させる。各レベルの探索は、手番ごとの候補手数を指定した再帰ミニマックス（search）で統一的に扱う。
  */
 final class GomokuAi {
 
     private static final int[][] DIRS = {{0, 1}, {1, 0}, {1, 1}, {1, -1}};
 
+    // 各レベルの深さごとの候補手数（1手目=自分の着手を含む）。深さが増える分、各層の候補手は絞る。
     // DEFAULT: 2手先読み（自分の着手 → 相手の最善応手）。
-    private static final int DEFAULT_TOP_LEVEL_CANDIDATES = 14;
-    private static final int DEFAULT_RESPONSE_CANDIDATES = 10;
-
-    // TEST: 3手先読み（自分の着手 → 相手の最善応手 → 自分の追撃）。深さが増える分、各層の候補手は絞る。
-    private static final int TEST_TOP_LEVEL_CANDIDATES = 12;
-    private static final int TEST_RESPONSE_CANDIDATES = 8;
-    private static final int TEST_FOLLOW_UP_CANDIDATES = 6;
+    private static final int[] DEFAULT_CANDIDATES = {14, 10};
+    // TEST: 3手先読み（自分の着手 → 相手の最善応手 → 自分の追撃）。
+    private static final int[] TEST_CANDIDATES = {12, 8, 6};
+    // TEST2: 5手先読み（自分 → 相手 → 自分 → 相手 → 自分）。層が多いぶん各層はさらに絞る。
+    private static final int[] TEST2_CANDIDATES = {8, 6, 5, 4, 3};
 
     private GomokuAi() {
+    }
+
+    private static int[] candidateCountsFor(AiLevel level) {
+        return switch (level) {
+            case TEST -> TEST_CANDIDATES;
+            case TEST2 -> TEST2_CANDIDATES;
+            default -> DEFAULT_CANDIDATES;
+        };
     }
 
     static int[] chooseMove(GameStateSnapshot state, String aiColor, AiLevel level) {
         SimState root = SimState.fromSnapshot(state);
         String opponent = other(aiColor);
-        int topCandidates = level == AiLevel.TEST ? TEST_TOP_LEVEL_CANDIDATES : DEFAULT_TOP_LEVEL_CANDIDATES;
+        int[] candidateCounts = candidateCountsFor(level);
+        int maxDepth = candidateCounts.length;
 
-        List<int[]> myCandidates = rankedCandidates(root, aiColor, opponent, topCandidates);
+        List<int[]> myCandidates = rankedCandidates(root, aiColor, opponent, candidateCounts[0]);
         if (myCandidates.isEmpty()) return null;
 
         double bestValue = Double.NEGATIVE_INFINITY;
@@ -56,7 +65,7 @@ final class GomokuAi {
             if (afterMine.gameOver) {
                 value = terminalValue(afterMine, aiColor, opponent);
             } else {
-                value = worstCaseAfterOpponentResponse(afterMine, aiColor, opponent, level);
+                value = search(afterMine, aiColor, opponent, false, 1, maxDepth, candidateCounts);
             }
             value += ThreadLocalRandom.current().nextDouble() * 0.01;
 
@@ -72,47 +81,32 @@ final class GomokuAi {
     }
 
     /**
-     * 相手が最も自分に不利な応手を選ぶと仮定し、その中での最悪値を返す。
-     * TESTレベルでは、その後さらに自分が取れる最善の追撃（3手目）まで見込んだ値を使う。
+     * 深さ depth（0始まり、0は既に打たれた自分の1手目）まで進んだ局面から、残りの手番を再帰的に
+     * ミニマックス探索する。奇数深さは相手の手番（最小化）、偶数深さは自分の手番（最大化）。
+     * depth が maxDepth に達したら、それ以上は読まずヒューリスティック評価で打ち切る。
      */
-    private static double worstCaseAfterOpponentResponse(SimState afterMine, String aiColor, String opponent,
-                                                           AiLevel level) {
-        int responseCandidates = level == AiLevel.TEST ? TEST_RESPONSE_CANDIDATES : DEFAULT_RESPONSE_CANDIDATES;
-        List<int[]> responses = rankedCandidates(afterMine, opponent, aiColor, responseCandidates);
-        if (responses.isEmpty()) {
-            return evaluate(afterMine, aiColor, opponent);
+    private static double search(SimState state, String aiColor, String opponent, boolean maximizing,
+                                  int depth, int maxDepth, int[] candidateCounts) {
+        if (state.gameOver) {
+            return terminalValue(state, aiColor, opponent);
         }
-        double worst = Double.POSITIVE_INFINITY;
-        for (int[] cell : responses) {
-            SimState afterResponse = afterMine.copy();
-            applyMove(afterResponse, cell[0], cell[1], opponent);
-            double value;
-            if (afterResponse.gameOver) {
-                value = terminalValue(afterResponse, aiColor, opponent);
-            } else if (level == AiLevel.TEST) {
-                value = bestCaseAfterFollowUp(afterResponse, aiColor, opponent);
-            } else {
-                value = evaluate(afterResponse, aiColor, opponent);
-            }
-            worst = Math.min(worst, value);
+        if (depth >= maxDepth) {
+            return evaluate(state, aiColor, opponent);
         }
-        return worst;
-    }
 
-    /** 相手の応手の後、自分が取れる最善の追撃（3手目）を仮定した場合の局面価値。TESTレベルのみで使う。 */
-    private static double bestCaseAfterFollowUp(SimState afterResponse, String aiColor, String opponent) {
-        List<int[]> followUps = rankedCandidates(afterResponse, aiColor, opponent, TEST_FOLLOW_UP_CANDIDATES);
-        if (followUps.isEmpty()) {
-            return evaluate(afterResponse, aiColor, opponent);
+        String mover = maximizing ? aiColor : opponent;
+        String against = maximizing ? opponent : aiColor;
+        List<int[]> candidates = rankedCandidates(state, mover, against, candidateCounts[depth]);
+        if (candidates.isEmpty()) {
+            return evaluate(state, aiColor, opponent);
         }
-        double best = Double.NEGATIVE_INFINITY;
-        for (int[] cell : followUps) {
-            SimState afterFollowUp = afterResponse.copy();
-            applyMove(afterFollowUp, cell[0], cell[1], aiColor);
-            double value = afterFollowUp.gameOver
-                    ? terminalValue(afterFollowUp, aiColor, opponent)
-                    : evaluate(afterFollowUp, aiColor, opponent);
-            best = Math.max(best, value);
+
+        double best = maximizing ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
+        for (int[] cell : candidates) {
+            SimState next = state.copy();
+            applyMove(next, cell[0], cell[1], mover);
+            double value = search(next, aiColor, opponent, !maximizing, depth + 1, maxDepth, candidateCounts);
+            best = maximizing ? Math.max(best, value) : Math.min(best, value);
         }
         return best;
     }

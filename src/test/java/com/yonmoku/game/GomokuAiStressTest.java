@@ -29,6 +29,11 @@ class GomokuAiStressTest {
         runStress(AiLevel.TEST);
     }
 
+    @Test
+    void test2LevelNeverHangsOrThrowsOverManyRandomGames() {
+        runStress(AiLevel.TEST2);
+    }
+
     private void runStress(AiLevel level) {
         Random random = new Random(42);
         int gamesPlayed = 0;
