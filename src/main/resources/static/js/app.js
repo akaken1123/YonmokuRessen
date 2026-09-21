@@ -193,6 +193,13 @@
     return cell;
   }
 
+  function makeLabelCell(text){
+    const div = document.createElement('div');
+    div.className = 'board-label';
+    div.textContent = text;
+    return div;
+  }
+
   /** 通常時の盤面描画。boardOverride / extraClasses を渡すと、演出用に一時的な見た目で描画できる。 */
   function renderBoard(state, options){
     options = options || {};
@@ -204,7 +211,15 @@
     const extraClasses = options.extraClasses || {};
 
     boardEl.innerHTML = '';
+
+    // 1行目：左上の角（空白）＋ 列ラベル（A〜I）
+    boardEl.appendChild(makeLabelCell(''));
+    for(let c=0;c<state.size;c++){
+      boardEl.appendChild(makeLabelCell(String.fromCharCode(65 + c)));
+    }
+
     for(let r=0;r<state.size;r++){
+      boardEl.appendChild(makeLabelCell(String(r + 1))); // 行ラベル（1〜9）
       for(let c=0;c<state.size;c++){
         const cell = buildCell(r, c, board[r][c], dmgMarks, removalEchoes, interactive, state.currentPlayer,
             extraClasses[key(r,c)]);
