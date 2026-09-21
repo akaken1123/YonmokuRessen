@@ -82,6 +82,23 @@
     if(!Sfx.isMuted()) Sfx.click();
   });
 
+  // この端末で操作してよい色（対人戦で「自分の手番でないのに触れてしまう」事故を防ぐ）。
+  // ゲームIDごとにブラウザのlocalStorageへ保存する。空文字は「指定しない（従来通り誰でも操作可）」。
+  const MY_COLOR_KEY = 'hpgomoku_myColor_' + gameId;
+  const myColorBar = document.getElementById('myColorBar');
+  let myColor = '';
+  try{ myColor = localStorage.getItem(MY_COLOR_KEY) || ''; }catch(e){ /* ignore */ }
+
+  const myColorRadios = document.querySelectorAll('input[name="myColor"]');
+  myColorRadios.forEach(radio => {
+    radio.checked = (radio.value === myColor);
+    radio.addEventListener('change', ()=>{
+      myColor = radio.value;
+      try{ localStorage.setItem(MY_COLOR_KEY, myColor); }catch(e){ /* ignore */ }
+      if(previousState) render(previousState); // 盤面の操作可否を即座に反映
+    });
+  });
+
   document.getElementById('copyLinkBtn').addEventListener('click', async ()=>{
     const link = `${location.origin}${location.pathname}?id=${gameId}`;
     try{
@@ -207,7 +224,9 @@
     const dmgMarks = new Set(state.dmgMarks || []);
     const removalEchoes = state.removalEchoes || {};
     const interactive = options.interactive !== undefined ? options.interactive
-        : !(state.gameOver || (state.aiEnabled && state.currentPlayer === state.aiColor));
+        : !(state.gameOver
+            || (state.aiEnabled && state.currentPlayer === state.aiColor)
+            || (myColor && state.currentPlayer !== myColor));
     const extraClasses = options.extraClasses || {};
 
     boardEl.innerHTML = '';
@@ -255,8 +274,10 @@
     if(state.aiEnabled){
       aiBadge.style.display = '';
       aiBadge.textContent = `🤖 AI対戦モード（AI：${colorName(state.aiColor)}）`;
+      myColorBar.style.display = 'none'; // AI対戦ではAI側が自動でブロックされるため不要
     } else {
       aiBadge.style.display = 'none';
+      myColorBar.style.display = '';
     }
 
     if(state.gameOver){

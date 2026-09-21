@@ -10,7 +10,7 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 内蔵AI。2手先（自分の着手 → 相手の最善応手）までを読む簡易ミニマックス探索で着手を選ぶ。
+ * 内蔵AI。3手先（自分の着手 → 相手の最善応手 → 自分の追撃）までを読む簡易ミニマックス探索で着手を選ぶ。
  * 判断基準は主に2つ：
  *  1. 相手が取れる最善の応手を仮定し、その結果できるだけ被ダメージが少ない（できれば逆転できる）手を選ぶ。
  *  2. 相殺・除外の応酬が終わったタイミングの盤面（残りの石の配置）が自分に有利かを評価する。
@@ -19,8 +19,9 @@ import java.util.concurrent.ThreadLocalRandom;
 final class GomokuAi {
 
     private static final int[][] DIRS = {{0, 1}, {1, 0}, {1, 1}, {1, -1}};
-    private static final int TOP_LEVEL_CANDIDATES = 14;
-    private static final int RESPONSE_CANDIDATES = 10;
+    private static final int TOP_LEVEL_CANDIDATES = 12;
+    private static final int RESPONSE_CANDIDATES = 8;
+    private static final int FOLLOW_UP_CANDIDATES = 6;
 
     private GomokuAi() {
     }
@@ -58,7 +59,7 @@ final class GomokuAi {
         return best.get(ThreadLocalRandom.current().nextInt(best.size()));
     }
 
-    /** 相手が最も自分に不利な応手を選ぶと仮定し、その中での最悪値（＝相手の最善応手後の局面価値）を返す。 */
+    /** 相手が最も自分に不利な応手を選ぶと仮定し、その中での最悪値（＝相手の最善応手後、自分が最善の追撃をした局面価値）を返す。 */
     private static double worstCaseAfterOpponentResponse(SimState afterMine, String aiColor, String opponent) {
         List<int[]> responses = rankedCandidates(afterMine, opponent, aiColor, RESPONSE_CANDIDATES);
         if (responses.isEmpty()) {
@@ -70,10 +71,28 @@ final class GomokuAi {
             applyMove(afterResponse, cell[0], cell[1], opponent);
             double value = afterResponse.gameOver
                     ? terminalValue(afterResponse, aiColor, opponent)
-                    : evaluate(afterResponse, aiColor, opponent);
+                    : bestCaseAfterFollowUp(afterResponse, aiColor, opponent);
             worst = Math.min(worst, value);
         }
         return worst;
+    }
+
+    /** 相手の応手の後、自分が取れる最善の追撃（3手目）を仮定した場合の局面価値。 */
+    private static double bestCaseAfterFollowUp(SimState afterResponse, String aiColor, String opponent) {
+        List<int[]> followUps = rankedCandidates(afterResponse, aiColor, opponent, FOLLOW_UP_CANDIDATES);
+        if (followUps.isEmpty()) {
+            return evaluate(afterResponse, aiColor, opponent);
+        }
+        double best = Double.NEGATIVE_INFINITY;
+        for (int[] cell : followUps) {
+            SimState afterFollowUp = afterResponse.copy();
+            applyMove(afterFollowUp, cell[0], cell[1], aiColor);
+            double value = afterFollowUp.gameOver
+                    ? terminalValue(afterFollowUp, aiColor, opponent)
+                    : evaluate(afterFollowUp, aiColor, opponent);
+            best = Math.max(best, value);
+        }
+        return best;
     }
 
     private static double terminalValue(SimState s, String aiColor, String opponent) {
