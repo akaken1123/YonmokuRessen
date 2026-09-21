@@ -14,6 +14,11 @@
   const REMOVAL_ANIM_MS = 480;
 
   let previousState = null;
+  // 通信ラグ中の連打で、応答が返る前に別のセルを複数回クリックしてしまうと、サーバー側では
+  // 順番通り正当な着手として処理されてしまい（手番はサーバーが管理しているだけで、この端末が
+  // どちらの色を担当するかはUI上の制約にすぎない）、結果的に黒白両方を続けて置けてしまう。
+  // それを防ぐため、1件処理中は新たな着手を送らないようにする。
+  let moveInFlight = false;
   // 自分の操作の応答（fetch）とWebSocket配信が、ほぼ同時に同じ状態を届けることがある。
   // 除外演出中は previousState の更新が480ms後まで遅れるため、それより先に同期的に
   // 更新できる「直近に処理を開始した状態」のキーを別途持ち、重複処理を防ぐ。
@@ -151,6 +156,8 @@
   }
 
   async function placeStone(r,c){
+    if(moveInFlight) return; // 応答待ちの間の連打は無視する
+    moveInFlight = true;
     try{
       const res = await fetch(`/api/games/${gameId}/move`, {
         method:'POST',
@@ -165,6 +172,8 @@
       renderWithTransition(state);
     }catch(e){
       showError(e.message || '通信エラーが発生しました。');
+    }finally{
+      moveInFlight = false;
     }
   }
 
@@ -249,11 +258,18 @@
       boardEl.appendChild(makeLabelCell(String.fromCharCode(65 + c)));
     }
 
+    const lastMove = state.lastMove;
+
     for(let r=0;r<state.size;r++){
       boardEl.appendChild(makeLabelCell(String(r + 1))); // 行ラベル（1〜9）
       for(let c=0;c<state.size;c++){
+        let extraClass = extraClasses[key(r,c)];
+        // 直前に打たれた石の場所を常時ハイライトする（その手で除外されて石が残っていない場合は対象外）。
+        if(lastMove && r === lastMove.row && c === lastMove.col && board[r][c]){
+          extraClass = (extraClass ? extraClass + ' ' : '') + 'last-move';
+        }
         const cell = buildCell(r, c, board[r][c], dmgMarks, removalEchoes, interactive, state.currentPlayer,
-            extraClasses[key(r,c)]);
+            extraClass);
         boardEl.appendChild(cell);
       }
     }

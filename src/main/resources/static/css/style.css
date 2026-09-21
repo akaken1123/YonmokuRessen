@@ -336,6 +336,16 @@ h1{
   aspect-ratio: 1;
 }
 .cell.disabled{ cursor: default; }
+/* 直前に打たれた石のマス。次の着手が起きるまで場所がわかるよう常時表示する（アニメーションではない）。 */
+.cell.last-move::after{
+  content:"";
+  position:absolute;
+  inset: 8%;
+  border: 2px solid var(--accent-gold);
+  border-radius: 4px;
+  pointer-events:none;
+  box-shadow: 0 0 4px rgba(212,165,61,0.7);
+}
 .cell:hover .ghost{
   opacity: 0.35;
 }

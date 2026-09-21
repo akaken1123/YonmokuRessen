@@ -34,9 +34,9 @@
     return div;
   }
 
-  function buildCell(stone, dmgMarks, removalEchoes, k){
+  function buildCell(stone, dmgMarks, removalEchoes, k, isLastMove){
     const cell = document.createElement('div');
-    cell.className = 'cell disabled';
+    cell.className = 'cell disabled' + (isLastMove ? ' last-move' : '');
     if(stone){
       const s = document.createElement('div');
       s.className = 'stone ' + (stone.color === 'B' ? 'black' : 'white');
@@ -66,6 +66,7 @@
   function renderBoard(state){
     const dmgMarks = new Set(state.dmgMarks || []);
     const removalEchoes = state.removalEchoes || {};
+    const lastMove = state.lastMove;
     boardEl.innerHTML = '';
     boardEl.appendChild(makeLabelCell(''));
     for(let c=0;c<state.size;c++){
@@ -74,7 +75,8 @@
     for(let r=0;r<state.size;r++){
       boardEl.appendChild(makeLabelCell(String(r + 1)));
       for(let c=0;c<state.size;c++){
-        boardEl.appendChild(buildCell(state.board[r][c], dmgMarks, removalEchoes, key(r,c)));
+        const isLastMove = !!(lastMove && r === lastMove.row && c === lastMove.col && state.board[r][c]);
+        boardEl.appendChild(buildCell(state.board[r][c], dmgMarks, removalEchoes, key(r,c), isLastMove));
       }
     }
   }
