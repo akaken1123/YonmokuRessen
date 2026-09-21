@@ -42,31 +42,45 @@ public final class GameRoom {
     private String winner;
     private Deque<String> log;
     private Instant lastActivity;
-    private boolean aiEnabled;
-    private String aiColor;
-    private AiLevel aiLevel = AiLevel.DEFAULT;
+    // 各色をAIが担当する場合のレベル。nullなら人間が操作する色。両方nullなら人間対人間、
+    // 両方非nullならAI対AI（観戦専用）になる。resetをまたいで保持される。
+    private AiLevel blackAiLevel;
+    private AiLevel whiteAiLevel;
     private LastMove lastMove;
+    private final List<GameStateSnapshot> history = new ArrayList<>();
 
     public GameRoom(String id) {
         this.id = id;
         reset();
     }
 
-    /** この対局をAI対戦にする（またはAI対戦をやめる）。resetをまたいで有効。 */
-    public synchronized void configureAi(boolean enabled, String color, AiLevel level) {
-        aiEnabled = enabled;
-        aiColor = enabled ? color : null;
-        aiLevel = level != null ? level : AiLevel.DEFAULT;
+    /** 指定した色をAI（levelを指定）または人間（level=null）が操作するように設定する。resetをまたいで有効。 */
+    public synchronized void setAi(String color, AiLevel level) {
+        if ("B".equals(color)) {
+            blackAiLevel = level;
+        } else if ("W".equals(color)) {
+            whiteAiLevel = level;
+        }
+    }
+
+    private AiLevel aiLevelFor(String color) {
+        return "B".equals(color) ? blackAiLevel : whiteAiLevel;
     }
 
     public synchronized boolean isAiTurn() {
-        return aiEnabled && !gameOver && aiColor != null && aiColor.equals(currentPlayer);
+        return !gameOver && aiLevelFor(currentPlayer) != null;
+    }
+
+    /** 両方の色をAIが担当している（観戦専用の対局である）かどうか。 */
+    public synchronized boolean isFullyAiControlled() {
+        return blackAiLevel != null && whiteAiLevel != null;
     }
 
     /** 現在AIの手番であれば、AIに着手させる。手番でなければ何もしない。 */
     public synchronized void playAiMove() {
         if (!isAiTurn()) return;
-        int[] move = GomokuAi.chooseMove(snapshot(), aiColor, aiLevel);
+        AiLevel level = aiLevelFor(currentPlayer);
+        int[] move = GomokuAi.chooseMove(snapshot(), currentPlayer, level);
         if (move != null) {
             placeStone(move[0], move[1]);
         }
@@ -90,6 +104,7 @@ public final class GameRoom {
         log = new ArrayDeque<>();
         lastActivity = Instant.now();
         lastMove = null;
+        history.clear();
     }
 
     private static String opponent(String c) {
@@ -357,10 +372,17 @@ public final class GameRoom {
             }
             currentPlayer = opponent(color);
         }
+
+        history.add(snapshot());
     }
 
     public String getId() {
         return id;
+    }
+
+    /** 対局開始からの各着手直後の状態を、古い順に返す（棋譜検討用）。 */
+    public synchronized List<GameStateSnapshot> getHistory() {
+        return new ArrayList<>(history);
     }
 
     public synchronized Instant getLastActivity() {
@@ -391,9 +413,8 @@ public final class GameRoom {
                 winner,
                 plyCount,
                 logCopy,
-                aiEnabled,
-                aiColor,
-                aiLevel,
+                blackAiLevel,
+                whiteAiLevel,
                 lastMove
         );
     }

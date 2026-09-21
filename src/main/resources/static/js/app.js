@@ -34,7 +34,7 @@
 
   function scheduleAiWatchdog(state){
     clearAiWatchdog();
-    if(state && state.aiEnabled && !state.gameOver && state.currentPlayer === state.aiColor){
+    if(state && !state.gameOver && isAiColor(state, state.currentPlayer)){
       aiWatchdogTimer = setTimeout(async ()=>{
         try{
           const res = await fetch(`/api/games/${gameId}`);
@@ -99,6 +99,8 @@
     });
   });
 
+  document.getElementById('reviewLink').href = `review.html?id=${gameId}`;
+
   document.getElementById('copyLinkBtn').addEventListener('click', async ()=>{
     const link = `${location.origin}${location.pathname}?id=${gameId}`;
     try{
@@ -137,6 +139,11 @@
 
   function colorName(c){ return c === 'B' ? '黒' : '白'; }
   function key(r,c){ return r+','+c; }
+  /** その色をAIが担当している場合はレベル名（'DEFAULT'/'TEST'）、人間操作ならnullを返す。 */
+  function aiLevelFor(state, color){ return color === 'B' ? state.blackAiLevel : state.whiteAiLevel; }
+  function isAiColor(state, color){ return !!aiLevelFor(state, color); }
+  function isAiVsAi(state){ return isAiColor(state, 'B') && isAiColor(state, 'W'); }
+  function levelLabel(level){ return level === 'TEST' ? 'テストAI・3手先読み' : 'デフォルトAI・2手先読み'; }
 
   async function placeStone(r,c){
     try{
@@ -225,7 +232,7 @@
     const removalEchoes = state.removalEchoes || {};
     const interactive = options.interactive !== undefined ? options.interactive
         : !(state.gameOver
-            || (state.aiEnabled && state.currentPlayer === state.aiColor)
+            || isAiColor(state, state.currentPlayer)
             || (myColor && state.currentPlayer !== myColor));
     const extraClasses = options.extraClasses || {};
 
@@ -271,10 +278,16 @@
       }
     }
 
-    if(state.aiEnabled){
-      const levelLabel = state.aiLevel === 'TEST' ? 'テストAI・3手先読み' : 'デフォルトAI・2手先読み';
+    const blackAi = aiLevelFor(state, 'B');
+    const whiteAi = aiLevelFor(state, 'W');
+    if(isAiVsAi(state)){
       aiBadge.style.display = '';
-      aiBadge.textContent = `🤖 AI対戦モード（AI：${colorName(state.aiColor)}／${levelLabel}）`;
+      aiBadge.textContent = `🤖 AI対AI観戦モード（黒：${levelLabel(blackAi)}／白：${levelLabel(whiteAi)}）`;
+      myColorBar.style.display = 'none';
+    } else if(blackAi || whiteAi){
+      const aiColor = blackAi ? 'B' : 'W';
+      aiBadge.style.display = '';
+      aiBadge.textContent = `🤖 AI対戦モード（AI：${colorName(aiColor)}／${levelLabel(aiLevelFor(state, aiColor))}）`;
       myColorBar.style.display = 'none'; // AI対戦ではAI側が自動でブロックされるため不要
     } else {
       aiBadge.style.display = 'none';
@@ -282,9 +295,9 @@
     }
 
     if(state.gameOver){
-      statusEl.innerHTML = 'ゲーム終了。「最初から」で再戦できます。';
-    } else if(state.aiEnabled && state.currentPlayer === state.aiColor){
-      statusEl.innerHTML = `<span class="turn-of">🤖 AI思考中…</span>`;
+      statusEl.innerHTML = 'ゲーム終了。「最初から」で再戦、または下の「棋譜を見る」で振り返りができます。';
+    } else if(isAiColor(state, state.currentPlayer)){
+      statusEl.innerHTML = `<span class="turn-of">🤖 ${colorName(state.currentPlayer)}（AI）思考中…</span>`;
     } else {
       const roundNo = Math.ceil((state.plyCount + 1) / 2);
       let s = `<span class="turn-of">${colorName(state.currentPlayer)}の手番</span>（${state.plyCount + 1}手目・${roundNo}巡目）`;

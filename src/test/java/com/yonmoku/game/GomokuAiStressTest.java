@@ -36,7 +36,7 @@ class GomokuAiStressTest {
 
         for (int g = 0; g < 150; g++) {
             GameRoom room = new GameRoom("STRESS" + g);
-            room.configureAi(true, "W", level);
+            room.setAi("W", level);
 
             for (int ply = 0; ply < 200; ply++) {
                 GameStateSnapshot state = room.snapshot();

@@ -48,6 +48,24 @@
       <button id="joinBtn">参加する</button>
     </div>
   </div>
+
+  <div class="lobby-card">
+    <h2>AI対AIを観戦する</h2>
+    <p>デフォルトAIとテストAI、どちらが強いか自動対戦させて見比べられます。人間の操作は不要です。</p>
+    <div class="choice-row">
+      <span>黒：</span>
+      <label><input type="radio" name="watchBlackAi" value="DEFAULT" checked> デフォルトAI</label>
+      <label><input type="radio" name="watchBlackAi" value="TEST"> テストAI</label>
+    </div>
+    <div class="choice-row">
+      <span>白：</span>
+      <label><input type="radio" name="watchWhiteAi" value="DEFAULT"> デフォルトAI</label>
+      <label><input type="radio" name="watchWhiteAi" value="TEST" checked> テストAI</label>
+    </div>
+    <div class="controls" style="margin:0;">
+      <button class="primary" id="watchBtn">観戦を始める</button>
+    </div>
+  </div>
 </div>
 
 <script src="js/sfx.js"></script>
@@ -75,9 +93,24 @@ document.getElementById('vsAiBtn').addEventListener('click', async ()=>{
   Sfx.click();
   try{
     const humanColor = document.querySelector('input[name="aiHumanColor"]:checked').value;
-    const aiColor = humanColor === 'B' ? 'W' : 'B';
     const aiLevel = document.querySelector('input[name="aiLevel"]:checked').value;
-    const res = await fetch(`/api/games?vsAi=true&aiColor=${aiColor}&aiLevel=${aiLevel}`, { method:'POST' });
+    const param = humanColor === 'B' ? `whiteAi=${aiLevel}` : `blackAi=${aiLevel}`;
+    const res = await fetch(`/api/games?${param}`, { method:'POST' });
+    if(!res.ok) throw new Error('対局の作成に失敗しました');
+    const state = await res.json();
+    location.href = `game.html?id=${state.id}`;
+  }catch(e){
+    showError(e.message);
+  }
+});
+
+document.getElementById('watchBtn').addEventListener('click', async ()=>{
+  Sfx.unlock();
+  Sfx.click();
+  try{
+    const blackAi = document.querySelector('input[name="watchBlackAi"]:checked').value;
+    const whiteAi = document.querySelector('input[name="watchWhiteAi"]:checked').value;
+    const res = await fetch(`/api/games?blackAi=${blackAi}&whiteAi=${whiteAi}`, { method:'POST' });
     if(!res.ok) throw new Error('対局の作成に失敗しました');
     const state = await res.json();
     location.href = `game.html?id=${state.id}`;
