@@ -239,6 +239,18 @@ public final class GameRoom {
      */
     static MoveResolution resolveMove(Stone[][] board, Set<String> dmgMarks, Map<String, Boolean> removalEchoes,
                                        Map<String, Integer> hp, Pending pendingBefore, int r, int c, String color) {
+        // バックアタックの補正値（+1／+2）は、それが付いた着手で除外が同時に発生した場合にしか使えない
+        // ようにする。前の着手で除外を伴わなかった（保留ダメージ軽減のみで石が盤上に残った）場合、
+        // その補正値はこの着手までの間だけ残り、ここで消す（次の別の除外に使われて強すぎになるのを防ぐ）。
+        for (int rr = 0; rr < board.length; rr++) {
+            for (int cc = 0; cc < board.length; cc++) {
+                Stone stale = board[rr][cc];
+                if (stale != null && stale.backAttackBonus() > 0) {
+                    board[rr][cc] = new Stone(stale.color(), stale.dmgFlag(), 0);
+                }
+            }
+        }
+
         String k = key(r, c);
         boolean dmgFlag = false;
         int backAttackBonus = 0;
