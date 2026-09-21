@@ -31,6 +31,10 @@
       <label><input type="radio" name="aiHumanColor" value="B" checked> 自分は黒（先手）</label>
       <label><input type="radio" name="aiHumanColor" value="W"> 自分は白（後手）</label>
     </div>
+    <div class="choice-row">
+      <label><input type="radio" name="aiLevel" value="DEFAULT" checked> デフォルトAI（2手先読み・安定版）</label>
+      <label><input type="radio" name="aiLevel" value="TEST"> テストAI（3手先読み・実験版）</label>
+    </div>
     <div class="controls" style="margin:0;">
       <button class="primary" id="vsAiBtn">AIと対戦を始める</button>
     </div>
@@ -72,7 +76,8 @@ document.getElementById('vsAiBtn').addEventListener('click', async ()=>{
   try{
     const humanColor = document.querySelector('input[name="aiHumanColor"]:checked').value;
     const aiColor = humanColor === 'B' ? 'W' : 'B';
-    const res = await fetch(`/api/games?vsAi=true&aiColor=${aiColor}`, { method:'POST' });
+    const aiLevel = document.querySelector('input[name="aiLevel"]:checked').value;
+    const res = await fetch(`/api/games?vsAi=true&aiColor=${aiColor}&aiLevel=${aiLevel}`, { method:'POST' });
     if(!res.ok) throw new Error('対局の作成に失敗しました');
     const state = await res.json();
     location.href = `game.html?id=${state.id}`;

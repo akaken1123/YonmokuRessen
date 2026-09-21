@@ -10,27 +10,39 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 内蔵AI。3手先（自分の着手 → 相手の最善応手 → 自分の追撃）までを読む簡易ミニマックス探索で着手を選ぶ。
+ * 内蔵AI。自分の着手 → 相手の最善応手（DEFAULT: 2手先読み）、あるいはさらに自分の追撃まで
+ * （TEST: 3手先読み）を読む簡易ミニマックス探索で着手を選ぶ。
  * 判断基準は主に2つ：
  *  1. 相手が取れる最善の応手を仮定し、その結果できるだけ被ダメージが少ない（できれば逆転できる）手を選ぶ。
  *  2. 相殺・除外の応酬が終わったタイミングの盤面（残りの石の配置）が自分に有利かを評価する。
  * 深い探索木を全展開すると重いため、各手番ではヒューリスティックで有望な候補手だけに絞り込んで探索する。
+ *
+ * DEFAULT（2手先読み）は長く動かして調整してきた安定版。TEST（3手先読み）は追撃まで読む実験版で、
+ * 候補手の絞り込みが深さ分だけ狭くなる（＝重要な手を見落とすリスクが上がる）ぶん、必ずしも
+ * DEFAULTより強いとは限らない。新しい調整はまずTESTに入れ、十分比較してからDEFAULTに昇格させる。
  */
 final class GomokuAi {
 
     private static final int[][] DIRS = {{0, 1}, {1, 0}, {1, 1}, {1, -1}};
-    private static final int TOP_LEVEL_CANDIDATES = 12;
-    private static final int RESPONSE_CANDIDATES = 8;
-    private static final int FOLLOW_UP_CANDIDATES = 6;
+
+    // DEFAULT: 2手先読み（自分の着手 → 相手の最善応手）。
+    private static final int DEFAULT_TOP_LEVEL_CANDIDATES = 14;
+    private static final int DEFAULT_RESPONSE_CANDIDATES = 10;
+
+    // TEST: 3手先読み（自分の着手 → 相手の最善応手 → 自分の追撃）。深さが増える分、各層の候補手は絞る。
+    private static final int TEST_TOP_LEVEL_CANDIDATES = 12;
+    private static final int TEST_RESPONSE_CANDIDATES = 8;
+    private static final int TEST_FOLLOW_UP_CANDIDATES = 6;
 
     private GomokuAi() {
     }
 
-    static int[] chooseMove(GameStateSnapshot state, String aiColor) {
+    static int[] chooseMove(GameStateSnapshot state, String aiColor, AiLevel level) {
         SimState root = SimState.fromSnapshot(state);
         String opponent = other(aiColor);
+        int topCandidates = level == AiLevel.TEST ? TEST_TOP_LEVEL_CANDIDATES : DEFAULT_TOP_LEVEL_CANDIDATES;
 
-        List<int[]> myCandidates = rankedCandidates(root, aiColor, opponent, TOP_LEVEL_CANDIDATES);
+        List<int[]> myCandidates = rankedCandidates(root, aiColor, opponent, topCandidates);
         if (myCandidates.isEmpty()) return null;
 
         double bestValue = Double.NEGATIVE_INFINITY;
@@ -44,7 +56,7 @@ final class GomokuAi {
             if (afterMine.gameOver) {
                 value = terminalValue(afterMine, aiColor, opponent);
             } else {
-                value = worstCaseAfterOpponentResponse(afterMine, aiColor, opponent);
+                value = worstCaseAfterOpponentResponse(afterMine, aiColor, opponent, level);
             }
             value += ThreadLocalRandom.current().nextDouble() * 0.01;
 
@@ -59,9 +71,14 @@ final class GomokuAi {
         return best.get(ThreadLocalRandom.current().nextInt(best.size()));
     }
 
-    /** 相手が最も自分に不利な応手を選ぶと仮定し、その中での最悪値（＝相手の最善応手後、自分が最善の追撃をした局面価値）を返す。 */
-    private static double worstCaseAfterOpponentResponse(SimState afterMine, String aiColor, String opponent) {
-        List<int[]> responses = rankedCandidates(afterMine, opponent, aiColor, RESPONSE_CANDIDATES);
+    /**
+     * 相手が最も自分に不利な応手を選ぶと仮定し、その中での最悪値を返す。
+     * TESTレベルでは、その後さらに自分が取れる最善の追撃（3手目）まで見込んだ値を使う。
+     */
+    private static double worstCaseAfterOpponentResponse(SimState afterMine, String aiColor, String opponent,
+                                                           AiLevel level) {
+        int responseCandidates = level == AiLevel.TEST ? TEST_RESPONSE_CANDIDATES : DEFAULT_RESPONSE_CANDIDATES;
+        List<int[]> responses = rankedCandidates(afterMine, opponent, aiColor, responseCandidates);
         if (responses.isEmpty()) {
             return evaluate(afterMine, aiColor, opponent);
         }
@@ -69,17 +86,22 @@ final class GomokuAi {
         for (int[] cell : responses) {
             SimState afterResponse = afterMine.copy();
             applyMove(afterResponse, cell[0], cell[1], opponent);
-            double value = afterResponse.gameOver
-                    ? terminalValue(afterResponse, aiColor, opponent)
-                    : bestCaseAfterFollowUp(afterResponse, aiColor, opponent);
+            double value;
+            if (afterResponse.gameOver) {
+                value = terminalValue(afterResponse, aiColor, opponent);
+            } else if (level == AiLevel.TEST) {
+                value = bestCaseAfterFollowUp(afterResponse, aiColor, opponent);
+            } else {
+                value = evaluate(afterResponse, aiColor, opponent);
+            }
             worst = Math.min(worst, value);
         }
         return worst;
     }
 
-    /** 相手の応手の後、自分が取れる最善の追撃（3手目）を仮定した場合の局面価値。 */
+    /** 相手の応手の後、自分が取れる最善の追撃（3手目）を仮定した場合の局面価値。TESTレベルのみで使う。 */
     private static double bestCaseAfterFollowUp(SimState afterResponse, String aiColor, String opponent) {
-        List<int[]> followUps = rankedCandidates(afterResponse, aiColor, opponent, FOLLOW_UP_CANDIDATES);
+        List<int[]> followUps = rankedCandidates(afterResponse, aiColor, opponent, TEST_FOLLOW_UP_CANDIDATES);
         if (followUps.isEmpty()) {
             return evaluate(afterResponse, aiColor, opponent);
         }

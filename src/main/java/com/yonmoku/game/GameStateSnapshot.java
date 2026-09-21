@@ -20,6 +20,7 @@ public record GameStateSnapshot(
         List<String> log,
         boolean aiEnabled,
         String aiColor,
+        AiLevel aiLevel,
         LastMove lastMove
 ) {
 }

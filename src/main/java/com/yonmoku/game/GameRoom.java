@@ -44,6 +44,7 @@ public final class GameRoom {
     private Instant lastActivity;
     private boolean aiEnabled;
     private String aiColor;
+    private AiLevel aiLevel = AiLevel.DEFAULT;
     private LastMove lastMove;
 
     public GameRoom(String id) {
@@ -52,9 +53,10 @@ public final class GameRoom {
     }
 
     /** この対局をAI対戦にする（またはAI対戦をやめる）。resetをまたいで有効。 */
-    public synchronized void configureAi(boolean enabled, String color) {
+    public synchronized void configureAi(boolean enabled, String color, AiLevel level) {
         aiEnabled = enabled;
         aiColor = enabled ? color : null;
+        aiLevel = level != null ? level : AiLevel.DEFAULT;
     }
 
     public synchronized boolean isAiTurn() {
@@ -64,7 +66,7 @@ public final class GameRoom {
     /** 現在AIの手番であれば、AIに着手させる。手番でなければ何もしない。 */
     public synchronized void playAiMove() {
         if (!isAiTurn()) return;
-        int[] move = GomokuAi.chooseMove(snapshot(), aiColor);
+        int[] move = GomokuAi.chooseMove(snapshot(), aiColor, aiLevel);
         if (move != null) {
             placeStone(move[0], move[1]);
         }
@@ -391,6 +393,7 @@ public final class GameRoom {
                 logCopy,
                 aiEnabled,
                 aiColor,
+                aiLevel,
                 lastMove
         );
     }

@@ -272,8 +272,9 @@
     }
 
     if(state.aiEnabled){
+      const levelLabel = state.aiLevel === 'TEST' ? 'テストAI・3手先読み' : 'デフォルトAI・2手先読み';
       aiBadge.style.display = '';
-      aiBadge.textContent = `🤖 AI対戦モード（AI：${colorName(state.aiColor)}）`;
+      aiBadge.textContent = `🤖 AI対戦モード（AI：${colorName(state.aiColor)}／${levelLabel}）`;
       myColorBar.style.display = 'none'; // AI対戦ではAI側が自動でブロックされるため不要
     } else {
       aiBadge.style.display = 'none';

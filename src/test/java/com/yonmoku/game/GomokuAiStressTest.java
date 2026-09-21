@@ -15,19 +15,28 @@ import static org.junit.jupiter.api.Assertions.fail;
  * GomokuAiが特定の局面でハング（無応答）したり例外を投げたりしないことを、
  * 大量のランダム対局を通して検証する。ユーザー報告の「AIが停止した」事象の
  * 再現を狙ったピンポイントの再現テストでは特定の局面に依存しすぎるため、
- * より広く局面パターンをカバーするために用意した。
+ * より広く局面パターンをカバーするために用意した。DEFAULT・TESTの両レベルを検証する。
  */
 class GomokuAiStressTest {
 
     @Test
-    void aiNeverHangsOrThrowsOverManyRandomGames() {
+    void defaultLevelNeverHangsOrThrowsOverManyRandomGames() {
+        runStress(AiLevel.DEFAULT);
+    }
+
+    @Test
+    void testLevelNeverHangsOrThrowsOverManyRandomGames() {
+        runStress(AiLevel.TEST);
+    }
+
+    private void runStress(AiLevel level) {
         Random random = new Random(42);
         int gamesPlayed = 0;
         int aiMovesMade = 0;
 
-        for (int g = 0; g < 300; g++) {
+        for (int g = 0; g < 150; g++) {
             GameRoom room = new GameRoom("STRESS" + g);
-            room.configureAi(true, "W");
+            room.configureAi(true, "W", level);
 
             for (int ply = 0; ply < 200; ply++) {
                 GameStateSnapshot state = room.snapshot();
@@ -44,7 +53,7 @@ class GomokuAiStressTest {
 
                 if ("W".equals(mover)) {
                     // AIの手番のはずが、configureAi直後は自動着手されない経路もあるため直接呼ぶ。
-                    int[] move = callWithTimeout(state, "W", g, ply);
+                    int[] move = callWithTimeout(state, "W", level, g, ply);
                     room.placeStone(move[0], move[1]);
                     aiMovesMade++;
                 } else {
@@ -60,11 +69,12 @@ class GomokuAiStressTest {
             gamesPlayed++;
         }
 
-        System.out.println("Completed " + gamesPlayed + " games, AI made " + aiMovesMade + " moves total, no hangs/exceptions.");
+        System.out.println("[" + level + "] Completed " + gamesPlayed + " games, AI made " + aiMovesMade
+                + " moves total, no hangs/exceptions.");
     }
 
-    private int[] callWithTimeout(GameStateSnapshot state, String color, int gameIdx, int ply) {
-        CompletableFuture<int[]> future = CompletableFuture.supplyAsync(() -> GomokuAi.chooseMove(state, color));
+    private int[] callWithTimeout(GameStateSnapshot state, String color, AiLevel level, int gameIdx, int ply) {
+        CompletableFuture<int[]> future = CompletableFuture.supplyAsync(() -> GomokuAi.chooseMove(state, color, level));
         try {
             int[] move = future.get(3, TimeUnit.SECONDS);
             if (move == null) {

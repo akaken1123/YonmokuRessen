@@ -29,10 +29,11 @@ public class GameController {
 
     @PostMapping
     public GameStateSnapshot createGame(@RequestParam(name = "vsAi", defaultValue = "false") boolean vsAi,
-                                         @RequestParam(name = "aiColor", defaultValue = "W") String aiColor) {
+                                         @RequestParam(name = "aiColor", defaultValue = "W") String aiColor,
+                                         @RequestParam(name = "aiLevel", defaultValue = "DEFAULT") String aiLevel) {
         GameRoom room = gameService.createGame();
         if (vsAi) {
-            room.configureAi(true, normalizeColor(aiColor));
+            room.configureAi(true, normalizeColor(aiColor), AiLevel.fromParam(aiLevel));
         }
         return resolveAiTurns(room);
     }
