@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * GomokuAiが特定の局面でハング（無応答）したり例外を投げたりしないことを、
  * 大量のランダム対局を通して検証する。ユーザー報告の「AIが停止した」事象の
  * 再現を狙ったピンポイントの再現テストでは特定の局面に依存しすぎるため、
- * より広く局面パターンをカバーするために用意した。DEFAULT・TESTの両レベルを検証する。
+ * より広く局面パターンをカバーするために用意した。DEFAULT・TEST・TEST2・TEST3の全レベルを検証する。
  */
 class GomokuAiStressTest {
 
@@ -34,12 +34,23 @@ class GomokuAiStressTest {
         runStress(AiLevel.TEST2);
     }
 
+    @Test
+    void test3LevelNeverHangsOrThrowsOverManyRandomGames() {
+        // TEST3は反復深化の時間予算(1.2秒)を使い切る設計のため、1手あたりの時間がかかる。
+        // ゲーム数を減らして、ハング/例外なしであることの検証に絞る。
+        runStress(AiLevel.TEST3, 20);
+    }
+
     private void runStress(AiLevel level) {
+        runStress(level, 150);
+    }
+
+    private void runStress(AiLevel level, int gameCount) {
         Random random = new Random(42);
         int gamesPlayed = 0;
         int aiMovesMade = 0;
 
-        for (int g = 0; g < 150; g++) {
+        for (int g = 0; g < gameCount; g++) {
             GameRoom room = new GameRoom("STRESS" + g);
             room.setAi("W", level);
 

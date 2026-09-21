@@ -146,6 +146,7 @@
   function levelLabel(level){
     if(level === 'TEST') return 'テストAI・3手先読み';
     if(level === 'TEST2') return 'テスト2AI・5手先読み';
+    if(level === 'TEST3') return 'テスト3AI・アルファベータ探索（時間の許す限り深読み）';
     return 'デフォルトAI・2手先読み';
   }
 
