@@ -20,6 +20,8 @@ public record GameStateSnapshot(
         List<String> log,
         AiLevel blackAiLevel,
         AiLevel whiteAiLevel,
-        LastMove lastMove
+        LastMove lastMove,
+        String blackNickname,
+        String whiteNickname
 ) {
 }

@@ -34,20 +34,27 @@
     <label><input type="radio" name="myColor" value="W"> 白</label>
   </div>
 
+  <div class="nickname-bar" id="nicknameBar" style="display:none;">
+    <span>ニックネーム（人間同士の対局でレーティングに使われます）：</span>
+    <input type="text" id="nicknameInput" maxlength="24" placeholder="例：たろう">
+    <button id="nicknameSetBtn">登録する</button>
+    <span id="nicknameStatus"></span>
+  </div>
+
   <div id="winnerBanner" class="winner-banner"></div>
 
   <div class="hp-row">
     <div class="hp-card" id="hpCardB">
       <div class="stone-badge black"></div>
       <div class="hp-info">
-        <div class="hp-label">黒 プレイヤー</div>
+        <div class="hp-label" id="hpLabelB">黒 プレイヤー</div>
         <div class="hp-bar" id="hpBarB"></div>
       </div>
     </div>
     <div class="hp-card" id="hpCardW">
       <div class="stone-badge white"></div>
       <div class="hp-info">
-        <div class="hp-label">白 プレイヤー</div>
+        <div class="hp-label" id="hpLabelW">白 プレイヤー</div>
         <div class="hp-bar" id="hpBarW"></div>
       </div>
     </div>
@@ -68,6 +75,7 @@
   <div class="controls">
     <button class="primary" id="resetBtn">最初から</button>
     <a id="reviewLink" href="#" target="_blank" rel="noopener"><button type="button">棋譜を見る</button></a>
+    <a href="ratings.html" target="_blank" rel="noopener"><button type="button">レーティングを見る</button></a>
   </div>
 
   <details>
@@ -78,6 +86,7 @@
     <p><b>ダメージ増加マーク</b>：5巡目（双方が5回ずつ着手し終えた10手目）以降、黒と白それぞれの石の周囲3マス以内にランダムでマークが置かれます。マークの上の石が4つ以上の並びに含まれて除外されると、除外1つにつきダメージ+1されます。以降4巡（8手）ごとに再設置され、設置回数が3の倍数になるたびに1辺あたりの設置数が+1（最大16個）されます。石の上に乗ったマークは、その石が除外されるまで石の上に小さな印として表示され続けます。</p>
     <p><b>勝敗</b>：HPは各6。HPが0以下になった方の負けです。</p>
     <p><b>2人プレイ</b>：この対局IDのリンクを開いた全ブラウザ（スマホ・PC問わず）で同じ盤面を共有します。手番の色を打つ側が、それぞれの端末からマスをクリック／タップしてください。「この端末の担当色」で自分の色を指定すると、自分の手番でない間はその端末では盤面を操作できなくなり、誤って相手の手番に触ってしまうのを防げます（同じ端末で黒白を交互に打つ場合は「指定しない」のままにしてください）。</p>
+    <p><b>レーティング</b>：黒白両方にニックネームを登録した状態で対局が終了すると、Eloレーティングが更新されます（AIが担当する色にはニックネームを登録できないため、AI対戦・AI対AI観戦は対象外です）。ランキングは「レーティングを見る」から確認できます。</p>
   </details>
 
   <div class="log-panel">

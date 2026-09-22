@@ -23,11 +23,14 @@ public class GameController {
     private final GameService gameService;
     private final SimpMessagingTemplate messagingTemplate;
     private final AiVsAiDriver aiVsAiDriver;
+    private final RatingService ratingService;
 
-    public GameController(GameService gameService, SimpMessagingTemplate messagingTemplate, AiVsAiDriver aiVsAiDriver) {
+    public GameController(GameService gameService, SimpMessagingTemplate messagingTemplate, AiVsAiDriver aiVsAiDriver,
+                           RatingService ratingService) {
         this.gameService = gameService;
         this.messagingTemplate = messagingTemplate;
         this.aiVsAiDriver = aiVsAiDriver;
+        this.ratingService = ratingService;
     }
 
     /**
@@ -60,8 +63,22 @@ public class GameController {
             throw new IllegalStateException("this game is AI vs AI (spectate only)");
         }
         room.placeStone(request.row(), request.col());
+        applyRatingUpdateIfConcluded(room);
         broadcast(id, room.snapshot());
         return resolveAiTurns(room);
+    }
+
+    /**
+     * この対局のレーティング用にニックネームを設定する（AIが担当する色には設定できない）。
+     * 対局は人間プレイヤー同士（両者にニックネームが設定されている場合）のみレーティング対象になる。
+     */
+    @PostMapping("/{id}/nickname")
+    public GameStateSnapshot setNickname(@PathVariable String id, @RequestBody NicknameRequest request) {
+        GameRoom room = gameService.getGame(id);
+        room.setNickname(request.color(), request.nickname());
+        GameStateSnapshot state = room.snapshot();
+        broadcast(id, state);
+        return state;
     }
 
     @PostMapping("/{id}/reset")
@@ -105,10 +122,20 @@ public class GameController {
                 break;
             }
             room.playAiMove();
+            applyRatingUpdateIfConcluded(room);
             state = room.snapshot();
             broadcast(room.getId(), state);
         }
         return state;
+    }
+
+    /** 対局がちょうど終了した直後であれば（人間プレイヤー同士かつ両者ニックネーム設定済みの場合のみ）、
+     *  レーティングへ結果を反映する。それ以外の場合は何もしない。 */
+    private void applyRatingUpdateIfConcluded(GameRoom room) {
+        RatingUpdate update = room.consumeRatingUpdate();
+        if (update != null) {
+            ratingService.recordResult(update.blackNickname(), update.whiteNickname(), update.winner());
+        }
     }
 
     private void broadcast(String id, GameStateSnapshot snapshot) {
@@ -120,7 +147,7 @@ public class GameController {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
     }
 
-    @ExceptionHandler({IllegalStateException.class, IndexOutOfBoundsException.class})
+    @ExceptionHandler({IllegalStateException.class, IndexOutOfBoundsException.class, IllegalArgumentException.class})
     public ResponseEntity<Map<String, String>> handleBadRequest(RuntimeException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
     }

@@ -48,6 +48,11 @@ public final class GameRoom {
     private AiLevel whiteAiLevel;
     private LastMove lastMove;
     private final List<GameStateSnapshot> history = new ArrayList<>();
+    // レーティング対象（人間プレイヤー同士）の対局で、対局結果をレーティングに反映するために使う
+    // ニックネーム。AIが担当する色には設定できない。resetをまたいで保持される（再戦も対象にするため）。
+    private String blackNickname;
+    private String whiteNickname;
+    private boolean ratingApplied;
 
     public GameRoom(String id) {
         this.id = id;
@@ -65,6 +70,42 @@ public final class GameRoom {
 
     private AiLevel aiLevelFor(String color) {
         return "B".equals(color) ? blackAiLevel : whiteAiLevel;
+    }
+
+    /**
+     * この対局のレーティング用にニックネームを設定する。AIが担当している色には設定できない。
+     *
+     * @throws IllegalStateException   その色をAIが担当している場合
+     * @throws IllegalArgumentException ニックネームが空、または長すぎる場合
+     */
+    public synchronized void setNickname(String color, String nickname) {
+        if (aiLevelFor(color) != null) {
+            throw new IllegalStateException("cannot set a nickname for an AI-controlled color");
+        }
+        String trimmed = nickname == null ? "" : nickname.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("nickname must not be blank");
+        }
+        if (trimmed.length() > 24) {
+            throw new IllegalArgumentException("nickname must be 24 characters or fewer");
+        }
+        if ("B".equals(color)) {
+            blackNickname = trimmed;
+        } else if ("W".equals(color)) {
+            whiteNickname = trimmed;
+        }
+    }
+
+    /**
+     * 直前の着手で対局が終了し、かつ両者のニックネームが設定されている場合に限り、レーティング更新に
+     * 必要な情報を1回だけ返す（それ以外は常にnull。同じ対局終了に対して2回以上呼んでも2回目以降はnull）。
+     */
+    public synchronized RatingUpdate consumeRatingUpdate() {
+        if (gameOver && !ratingApplied && blackNickname != null && whiteNickname != null) {
+            ratingApplied = true;
+            return new RatingUpdate(blackNickname, whiteNickname, winner);
+        }
+        return null;
     }
 
     public synchronized boolean isAiTurn() {
@@ -105,6 +146,7 @@ public final class GameRoom {
         lastActivity = Instant.now();
         lastMove = null;
         history.clear();
+        ratingApplied = false;
     }
 
     private static String opponent(String c) {
@@ -427,7 +469,9 @@ public final class GameRoom {
                 logCopy,
                 blackAiLevel,
                 whiteAiLevel,
-                lastMove
+                lastMove,
+                blackNickname,
+                whiteNickname
         );
     }
 }

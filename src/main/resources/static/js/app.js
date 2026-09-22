@@ -104,6 +104,41 @@
     });
   });
 
+  // レーティング用のニックネーム。端末ごとにブラウザへ保存し、対局ごとにこの色として登録できる。
+  const NICKNAME_KEY = 'hpgomoku_nickname';
+  const nicknameBar = document.getElementById('nicknameBar');
+  const nicknameInput = document.getElementById('nicknameInput');
+  const nicknameStatus = document.getElementById('nicknameStatus');
+  try{ nicknameInput.value = localStorage.getItem(NICKNAME_KEY) || ''; }catch(e){ /* ignore */ }
+
+  async function submitNickname(){
+    const nickname = nicknameInput.value.trim();
+    if(!myColor){
+      nicknameStatus.textContent = '先に自分の担当色を選んでください。';
+      return;
+    }
+    if(!nickname){
+      nicknameStatus.textContent = 'ニックネームを入力してください。';
+      return;
+    }
+    try{
+      try{ localStorage.setItem(NICKNAME_KEY, nickname); }catch(e){ /* ignore */ }
+      const res = await fetch(`/api/games/${gameId}/nickname`, {
+        method:'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ color: myColor, nickname })
+      });
+      if(!res.ok) throw await errorFrom(res);
+      const state = await res.json();
+      nicknameStatus.textContent = `登録しました：${nickname}`;
+      renderWithTransition(state);
+    }catch(e){
+      nicknameStatus.textContent = e.message || '登録に失敗しました。';
+    }
+  }
+  document.getElementById('nicknameSetBtn').addEventListener('click', submitNickname);
+  nicknameInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') submitNickname(); });
+
   document.getElementById('reviewLink').href = `review.html?id=${gameId}`;
 
   document.getElementById('copyLinkBtn').addEventListener('click', async ()=>{
@@ -305,15 +340,21 @@
       aiBadge.style.display = '';
       aiBadge.textContent = `🤖 AI対AI観戦モード（黒：${levelLabel(blackAi)}／白：${levelLabel(whiteAi)}）`;
       myColorBar.style.display = 'none';
+      nicknameBar.style.display = 'none'; // AIにはニックネームを登録できない
     } else if(blackAi || whiteAi){
       const aiColor = blackAi ? 'B' : 'W';
       aiBadge.style.display = '';
       aiBadge.textContent = `🤖 AI対戦モード（AI：${colorName(aiColor)}／${levelLabel(aiLevelFor(state, aiColor))}）`;
       myColorBar.style.display = 'none'; // AI対戦ではAI側が自動でブロックされるため不要
+      nicknameBar.style.display = 'none'; // 片方がAIの対局はレーティング対象外
     } else {
       aiBadge.style.display = 'none';
       myColorBar.style.display = '';
+      nicknameBar.style.display = '';
     }
+
+    document.getElementById('hpLabelB').textContent = state.blackNickname ? `黒（${state.blackNickname}）` : '黒 プレイヤー';
+    document.getElementById('hpLabelW').textContent = state.whiteNickname ? `白（${state.whiteNickname}）` : '白 プレイヤー';
 
     if(state.gameOver){
       statusEl.innerHTML = 'ゲーム終了。「最初から」で再戦、または下の「棋譜を見る」で振り返りができます。';
