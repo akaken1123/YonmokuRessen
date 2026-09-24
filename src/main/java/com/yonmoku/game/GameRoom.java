@@ -9,8 +9,8 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * HP制四目並べ、1対局分の状態とルール処理。
@@ -53,10 +53,18 @@ public final class GameRoom {
     private String blackNickname;
     private String whiteNickname;
     private boolean ratingApplied;
+    // ダメージ増加マーク設置（placeAntiStaleMarksOn）で使う乱数源。対局を通じて1つを使い回す。
+    // テストからは setRandomForTesting で差し替えて、再現可能な乱数列にできる。
+    private Random random = new Random();
 
     public GameRoom(String id) {
         this.id = id;
         reset();
+    }
+
+    /** テスト専用：この対局のダメージ増加マーク設置に使う乱数源を差し替える。 */
+    void setRandomForTesting(Random random) {
+        this.random = random;
     }
 
     /** 指定した色をAI（levelを指定）または人間（level=null）が操作するように設定する。resetをまたいで有効。 */
@@ -173,12 +181,19 @@ public final class GameRoom {
         return r >= 0 && r < SIZE && c >= 0 && c < SIZE;
     }
 
-    private void placeAntiStaleMarks() {
+    /**
+     * ダメージ増加マークの設置処理そのもの（board/dmgMarks/removalEchoesを直接書き換える）。
+     * ログ整形を含まない純粋な処理で、applyTurn（実際の対局・ステートレスな手のシミュレーションの
+     * 両方から使われる）が呼ぶ。戻り値は「どちらの色に何個置いたか」（ログ整形用）。
+     */
+    private static List<String> placeAntiStaleMarksOn(Stone[][] board, Set<String> dmgMarks,
+                                                        Map<String, Boolean> removalEchoes, int markPerSide,
+                                                        Random random) {
         List<String> placedInfo = new ArrayList<>();
         for (String color : new String[]{"B", "W"}) {
             List<int[]> stones = new ArrayList<>();
-            for (int r = 0; r < SIZE; r++) {
-                for (int c = 0; c < SIZE; c++) {
+            for (int r = 0; r < board.length; r++) {
+                for (int c = 0; c < board.length; c++) {
                     Stone s = board[r][c];
                     if (s != null && s.color().equals(color)) {
                         stones.add(new int[]{r, c});
@@ -192,7 +207,7 @@ public final class GameRoom {
             int maxAttempts = markPerSide * 40;
             while (placedCount < markPerSide && attempts < maxAttempts) {
                 attempts++;
-                int[] s = stones.get(ThreadLocalRandom.current().nextInt(stones.size()));
+                int[] s = stones.get(random.nextInt(stones.size()));
                 int sr = s[0], sc = s[1];
                 List<String> localCandidates = new ArrayList<>();
                 for (int dr = -MARK_RADIUS; dr <= MARK_RADIUS; dr++) {
@@ -206,7 +221,7 @@ public final class GameRoom {
                     }
                 }
                 if (localCandidates.isEmpty()) continue;
-                String chosen = localCandidates.get(ThreadLocalRandom.current().nextInt(localCandidates.size()));
+                String chosen = localCandidates.get(random.nextInt(localCandidates.size()));
                 dmgMarks.add(chosen);
                 placedCount++;
             }
@@ -214,10 +229,7 @@ public final class GameRoom {
                 placedInfo.add(colorName(color) + "側に" + placedCount + "個");
             }
         }
-        if (!placedInfo.isEmpty()) {
-            log.addFirst("【ダメージ増加マークの設置】" + String.join("、", placedInfo)
-                    + "（今後1辺あたり" + markPerSide + "個設置）");
-        }
+        return placedInfo;
     }
 
     /** 盤面の状態から除外を計算する（読み取り専用）。AIの先読みシミュレーションからも呼ばれる。 */
@@ -345,6 +357,58 @@ public final class GameRoom {
     }
 
     /**
+     * 1手分の完全な処理（resolveMove＋勝敗判定＋ダメージ増加マークの設置スケジュール＋手番交代）を、
+     * ログ整形や対局登録（GameService）を一切介さない純粋な処理として行う。board/dmgMarks/
+     * removalEchoes/hpは直接書き換える（呼び出し元が複製を渡せば、そのまま「シミュレーション結果」
+     * として使い回せる）。実際の対局（placeStone）とAPI経由のステートレスな手のシミュレーション
+     * （SimulationController）の両方から使われる、ゲームルールの唯一の実装。
+     * ダメージ増加マーク設置の乱数源は隠れたグローバル状態（ThreadLocalRandom等）を使わず、
+     * randomとして明示的に受け取る（呼び出し元が同じ乱数状態を渡せば、結果を再現できる）。
+     */
+    static TurnResult applyTurn(Stone[][] board, Set<String> dmgMarks, Map<String, Boolean> removalEchoes,
+                                 Map<String, Integer> hp, Pending pendingBefore,
+                                 int plyCount, int markEventCount, int markPerSide, int nextMarkEventTurn,
+                                 String color, int r, int c, Random random) {
+        MoveResolution res = resolveMove(board, dmgMarks, removalEchoes, hp, pendingBefore, r, c, color);
+
+        String winner = null;
+        boolean gameOver = false;
+        if (hp.get("B") <= 0 && hp.get("W") <= 0) {
+            gameOver = true;
+            winner = "draw";
+        } else if (hp.get("B") <= 0) {
+            gameOver = true;
+            winner = "W";
+        } else if (hp.get("W") <= 0) {
+            gameOver = true;
+            winner = "B";
+        }
+
+        List<String> markPlacementInfo = List.of();
+        String nextPlayer = color;
+        int newPlyCount = plyCount;
+        int newMarkEventCount = markEventCount;
+        int newMarkPerSide = markPerSide;
+        int newNextMarkEventTurn = nextMarkEventTurn;
+
+        if (!gameOver) {
+            newPlyCount = plyCount + 1;
+            if (newPlyCount == nextMarkEventTurn) {
+                markPlacementInfo = placeAntiStaleMarksOn(board, dmgMarks, removalEchoes, markPerSide, random);
+                newMarkEventCount = markEventCount + 1;
+                if (newMarkEventCount % MARK_GROWTH_EVERY_N_EVENTS == 0) {
+                    newMarkPerSide = Math.min(MARK_PER_SIDE_MAX, markPerSide + 1);
+                }
+                newNextMarkEventTurn = nextMarkEventTurn + MARK_EVENT_INTERVAL_PLIES;
+            }
+            nextPlayer = opponent(color);
+        }
+
+        return new TurnResult(res, res.pendingAfter(), gameOver, winner, newPlyCount, newMarkEventCount,
+                newMarkPerSide, newNextMarkEventTurn, nextPlayer, markPlacementInfo);
+    }
+
+    /**
      * 指定マスに現在の手番の色で着手する。
      *
      * @throws IllegalStateException   ゲームが既に終了している、またはマスが埋まっている場合
@@ -364,8 +428,10 @@ public final class GameRoom {
         lastActivity = Instant.now();
         String color = currentPlayer;
         Pending pendingBefore = pending;
-        MoveResolution res = resolveMove(board, dmgMarks, removalEchoes, hp, pendingBefore, r, c, color);
-        pending = res.pendingAfter();
+        TurnResult turn = applyTurn(board, dmgMarks, removalEchoes, hp, pendingBefore,
+                plyCount, markEventCount, markPerSide, nextMarkEventTurn, color, r, c, random);
+        MoveResolution res = turn.moveResolution();
+        pending = turn.pendingAfter();
         lastMove = new LastMove(r, c, color,
                 res.removalResult() != null ? res.removalResult().cells() : List.of());
 
@@ -404,27 +470,20 @@ public final class GameRoom {
 
         log.addFirst(msg.toString());
 
-        String w = null;
-        if (hp.get("B") <= 0 && hp.get("W") <= 0) w = "draw";
-        else if (hp.get("B") <= 0) w = "W";
-        else if (hp.get("W") <= 0) w = "B";
-        if (w != null) {
-            gameOver = true;
-            winner = w;
-            log.addFirst("draw".equals(w) ? "── 両者HP0：引き分け！" : "── " + colorName(w) + "の勝利！");
-        }
-
-        if (!gameOver) {
-            plyCount++;
-            if (plyCount == nextMarkEventTurn) {
-                placeAntiStaleMarks();
-                markEventCount++;
-                if (markEventCount % MARK_GROWTH_EVERY_N_EVENTS == 0) {
-                    markPerSide = Math.min(MARK_PER_SIDE_MAX, markPerSide + 1);
-                }
-                nextMarkEventTurn += MARK_EVENT_INTERVAL_PLIES;
+        gameOver = turn.gameOver();
+        winner = turn.winner();
+        if (gameOver) {
+            log.addFirst("draw".equals(winner) ? "── 両者HP0：引き分け！" : "── " + colorName(winner) + "の勝利！");
+        } else {
+            if (!turn.markPlacementInfo().isEmpty()) {
+                log.addFirst("【ダメージ増加マークの設置】" + String.join("、", turn.markPlacementInfo())
+                        + "（今後1辺あたり" + markPerSide + "個設置）");
             }
-            currentPlayer = opponent(color);
+            plyCount = turn.plyCount();
+            markEventCount = turn.markEventCount();
+            markPerSide = turn.markPerSide();
+            nextMarkEventTurn = turn.nextMarkEventTurn();
+            currentPlayer = turn.nextPlayer();
         }
 
         history.add(snapshot());
