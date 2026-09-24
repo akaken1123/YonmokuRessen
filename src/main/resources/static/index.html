@@ -36,6 +36,7 @@
       <label><input type="radio" name="aiLevel" value="TEST"> テストAI（3手先読み・実験版）</label>
       <label><input type="radio" name="aiLevel" value="TEST2"> テスト2AI（5手先読み・実験版）</label>
       <label><input type="radio" name="aiLevel" value="TEST3"> テスト3AI（アルファベータ探索・実験版）</label>
+      <label><input type="radio" name="aiLevel" value="LEARN"> 学習AI（自己対戦で重みを調整・実験版）</label>
     </div>
     <div class="controls" style="margin:0;">
       <button class="primary" id="vsAiBtn">AIと対戦を始める</button>
@@ -53,13 +54,14 @@
 
   <div class="lobby-card">
     <h2>AI対AIを観戦する</h2>
-    <p>デフォルトAI・テストAI・テスト2AI、どれが強いか自動対戦させて見比べられます。人間の操作は不要です。</p>
+    <p>デフォルトAI・テストAI・テスト2AI・テスト3AI・学習AI、どれが強いか自動対戦させて見比べられます。人間の操作は不要です。</p>
     <div class="choice-row">
       <span>黒：</span>
       <label><input type="radio" name="watchBlackAi" value="DEFAULT" checked> デフォルトAI</label>
       <label><input type="radio" name="watchBlackAi" value="TEST"> テストAI</label>
       <label><input type="radio" name="watchBlackAi" value="TEST2"> テスト2AI</label>
       <label><input type="radio" name="watchBlackAi" value="TEST3"> テスト3AI</label>
+      <label><input type="radio" name="watchBlackAi" value="LEARN"> 学習AI</label>
     </div>
     <div class="choice-row">
       <span>白：</span>
@@ -67,6 +69,7 @@
       <label><input type="radio" name="watchWhiteAi" value="TEST" checked> テストAI</label>
       <label><input type="radio" name="watchWhiteAi" value="TEST2"> テスト2AI</label>
       <label><input type="radio" name="watchWhiteAi" value="TEST3"> テスト3AI</label>
+      <label><input type="radio" name="watchWhiteAi" value="LEARN"> 学習AI</label>
     </div>
     <div class="controls" style="margin:0;">
       <button class="primary" id="watchBtn">観戦を始める</button>
@@ -78,6 +81,14 @@
     <p>人間プレイヤー同士の対局結果から集計したEloレーティングのランキングを見られます。</p>
     <div class="controls" style="margin:0;">
       <a href="ratings.html"><button type="button">レーティングを見る</button></a>
+    </div>
+  </div>
+
+  <div class="lobby-card">
+    <h2>学習AIを鍛える</h2>
+    <p>学習AIの評価関数の重みは、自己対戦（GPU不要）で少しずつ調整されます。手動で学習バッチを実行したり、現在の世代・重みを確認できます。</p>
+    <div class="controls" style="margin:0;">
+      <a href="learning.html"><button type="button">学習AIの状態を見る</button></a>
     </div>
   </div>
 </div>

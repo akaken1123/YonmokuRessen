@@ -20,16 +20,18 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * DEFAULT（2手先読み）は長く動かして調整してきた安定版。TEST（3手先読み）・TEST2（5手先読み）・
  * TEST3（アルファベータ＋反復深化）はさらに先まで読む実験版で、必ずしもDEFAULTより強いとは限らない。
- * 新しい調整はまずTEST系に入れ、十分比較してからDEFAULTに昇格させる。DEFAULT/TEST/TEST2の探索は、
- * 手番ごとの候補手数を指定した再帰ミニマックス（search）で統一的に扱う。
+ * LEARN（学習AI）は探索の深さはDEFAULTと同じだが、評価関数の重み（AiWeights）をLearningServiceが
+ * 自己対戦を通じて調整する。新しい調整はまずTEST系に入れ、十分比較してからDEFAULTに昇格させる。
+ * DEFAULT/TEST/TEST2の探索は、手番ごとの候補手数を指定した再帰ミニマックス（search）で統一的に扱う
+ * （LEARNはその重み可変版であるsearchWeighted/chooseMoveWeightedを使う）。
  */
 final class GomokuAi {
 
     private static final int[][] DIRS = {{0, 1}, {1, 0}, {1, 1}, {1, -1}};
 
     // 各レベルの深さごとの候補手数（1手目=自分の着手を含む）。深さが増える分、各層の候補手は絞る。
-    // DEFAULT: 2手先読み（自分の着手 → 相手の最善応手）。
-    private static final int[] DEFAULT_CANDIDATES = {14, 10};
+    // DEFAULT: 2手先読み（自分の着手 → 相手の最善応手）。LearningServiceの自己対戦にも同じ形を使う。
+    static final int[] DEFAULT_CANDIDATES = {14, 10};
     // TEST: 3手先読み（自分の着手 → 相手の最善応手 → 自分の追撃）。
     private static final int[] TEST_CANDIDATES = {12, 8, 6};
     // TEST2: 5手先読み（自分 → 相手 → 自分 → 相手 → 自分）。層が多いぶん各層はさらに絞る。
@@ -40,7 +42,19 @@ final class GomokuAi {
     private static final int TEST3_CANDIDATE_LIMIT = 10;
     private static final int TEST3_MAX_PLY = 20;
 
+    // LEARN: 探索の形はDEFAULTと同じ（2手先読み）で、評価関数の重み（AiWeights）だけを自己対戦で
+    // 学習していく。LearningServiceが起動時とバッチ学習後にsetLearnedWeightsで更新する。
+    private static volatile AiWeights learnedWeights = AiWeights.defaults();
+
     private GomokuAi() {
+    }
+
+    static void setLearnedWeights(AiWeights weights) {
+        learnedWeights = weights;
+    }
+
+    static AiWeights getLearnedWeights() {
+        return learnedWeights;
     }
 
     private static int[] candidateCountsFor(AiLevel level) {
@@ -54,6 +68,9 @@ final class GomokuAi {
     static int[] chooseMove(GameStateSnapshot state, String aiColor, AiLevel level) {
         if (level == AiLevel.TEST3) {
             return chooseMoveTest3(state, aiColor);
+        }
+        if (level == AiLevel.LEARN) {
+            return chooseMoveWeighted(state, aiColor, learnedWeights, DEFAULT_CANDIDATES);
         }
 
         SimState root = SimState.fromSnapshot(state);
@@ -225,6 +242,71 @@ final class GomokuAi {
         return best;
     }
 
+    /**
+     * 指定された重み（AiWeights）で着手を選ぶ。探索の形はDEFAULT/TEST/TEST2と同じ再帰ミニマックスだが、
+     * 評価関数だけがevaluateWeighted（重み可変）になる。LEARNレベルの実対局と、LearningServiceの
+     * 自己対戦（現チャンピオンと変異させた挑戦者を戦わせる）の両方から使われる。
+     */
+    static int[] chooseMoveWeighted(GameStateSnapshot state, String aiColor, AiWeights weights, int[] candidateCounts) {
+        SimState root = SimState.fromSnapshot(state);
+        String opponent = other(aiColor);
+        int maxDepth = candidateCounts.length;
+
+        List<int[]> myCandidates = rankedCandidates(root, aiColor, opponent, candidateCounts[0]);
+        if (myCandidates.isEmpty()) return null;
+
+        double bestValue = Double.NEGATIVE_INFINITY;
+        List<int[]> best = new ArrayList<>();
+
+        for (int[] cell : myCandidates) {
+            SimState afterMine = root.copy();
+            applyMove(afterMine, cell[0], cell[1], aiColor);
+
+            double value;
+            if (afterMine.gameOver) {
+                value = terminalValue(afterMine, aiColor, opponent);
+            } else {
+                value = searchWeighted(afterMine, aiColor, opponent, false, 1, maxDepth, candidateCounts, weights);
+            }
+            value += ThreadLocalRandom.current().nextDouble() * 0.01;
+
+            if (value > bestValue) {
+                bestValue = value;
+                best.clear();
+                best.add(cell);
+            } else if (value == bestValue) {
+                best.add(cell);
+            }
+        }
+        return best.get(ThreadLocalRandom.current().nextInt(best.size()));
+    }
+
+    private static double searchWeighted(SimState state, String aiColor, String opponent, boolean maximizing,
+                                          int depth, int maxDepth, int[] candidateCounts, AiWeights weights) {
+        if (state.gameOver) {
+            return terminalValue(state, aiColor, opponent);
+        }
+        if (depth >= maxDepth) {
+            return evaluateWeighted(state, aiColor, opponent, weights);
+        }
+
+        String mover = maximizing ? aiColor : opponent;
+        String against = maximizing ? opponent : aiColor;
+        List<int[]> candidates = rankedCandidates(state, mover, against, candidateCounts[depth]);
+        if (candidates.isEmpty()) {
+            return evaluateWeighted(state, aiColor, opponent, weights);
+        }
+
+        double best = maximizing ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
+        for (int[] cell : candidates) {
+            SimState next = state.copy();
+            applyMove(next, cell[0], cell[1], mover);
+            double value = searchWeighted(next, aiColor, opponent, !maximizing, depth + 1, maxDepth, candidateCounts, weights);
+            best = maximizing ? Math.max(best, value) : Math.min(best, value);
+        }
+        return best;
+    }
+
     private static double terminalValue(SimState s, String aiColor, String opponent) {
         if (aiColor.equals(s.winner)) return 1_000_000;
         if (opponent.equals(s.winner)) return -1_000_000;
@@ -325,6 +407,81 @@ final class GomokuAi {
         }
         value += boardScore * 0.02;
         return value;
+    }
+
+    /**
+     * LEARN用の評価関数。evaluateと同じ構造（HP差・保留ダメージ・ライン形成ポテンシャル）だが、
+     * 各項の重みが固定値ではなくAiWeights（自己対戦で学習される）になっている。
+     */
+    private static double evaluateWeighted(SimState s, String aiColor, String opponent, AiWeights w) {
+        double value = (s.hp.get(aiColor) - s.hp.get(opponent)) * w.hpWeight();
+
+        if (s.pending != null) {
+            double expected = s.pending.amount() * w.pendingWeight();
+            value += s.pending.target().equals(aiColor) ? -expected : expected;
+        }
+
+        double boardScore = 0;
+        for (int r = 0; r < s.board.length; r++) {
+            for (int c = 0; c < s.board.length; c++) {
+                if (s.board[r][c] == null) {
+                    boardScore += heuristicScoreWeighted(s.board, s.dmgMarks, s.removalEchoes, r, c, aiColor, w);
+                    boardScore -= heuristicScoreWeighted(s.board, s.dmgMarks, s.removalEchoes, r, c, opponent, w);
+                }
+            }
+        }
+        value += boardScore * w.boardScoreWeight();
+        return value;
+    }
+
+    private static double heuristicScoreWeighted(Stone[][] board, Set<String> dmgMarks,
+                                                  Map<String, Boolean> removalEchoes, int r, int c, String color,
+                                                  AiWeights w) {
+        double score = 0;
+        for (int[] d : DIRS) {
+            score += lineWeightWeighted(board, r, c, d[0], d[1], color, w);
+        }
+        int size = board.length;
+        int center = size / 2;
+        double distance = Math.hypot(r - center, c - center);
+        score += (size - distance) * w.centerWeight();
+        String k = key(r, c);
+        if (dmgMarks.contains(k)) score += w.dmgMarkBonus();
+        if (removalEchoes.containsKey(k)) score += w.echoMarkBonus();
+        return score;
+    }
+
+    private static double lineWeightWeighted(Stone[][] board, int r, int c, int dr, int dc, String color,
+                                               AiWeights w) {
+        int size = board.length;
+        int forward = 0;
+        int rr = r + dr, cc = c + dc;
+        while (inBounds(rr, cc, size) && board[rr][cc] != null && board[rr][cc].color().equals(color)) {
+            forward++;
+            rr += dr;
+            cc += dc;
+        }
+        boolean forwardOpen = inBounds(rr, cc, size) && board[rr][cc] == null;
+
+        int backward = 0;
+        rr = r - dr;
+        cc = c - dc;
+        while (inBounds(rr, cc, size) && board[rr][cc] != null && board[rr][cc].color().equals(color)) {
+            backward++;
+            rr -= dr;
+            cc -= dc;
+        }
+        boolean backwardOpen = inBounds(rr, cc, size) && board[rr][cc] == null;
+
+        int total = forward + backward + 1;
+        double base = Math.pow(4, Math.min(total, 4));
+        int openEnds = (forwardOpen ? 1 : 0) + (backwardOpen ? 1 : 0);
+        double factor = switch (openEnds) {
+            case 2 -> w.openTwoFactor();
+            case 1 -> w.openOneFactor();
+            default -> w.closedFactor();
+        };
+        return base * factor;
     }
 
     /**

@@ -3,3 +3,4 @@ target/
 .idea/
 *.iml
 ratings.json
+ai_weights.json

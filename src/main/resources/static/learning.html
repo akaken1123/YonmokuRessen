@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HP制四目並べ - 学習AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>HP制 四目並べ</h1>
+  <div class="subtitle">学習AI（LEARN）の状態と自己対戦学習</div>
+
+  <div id="errorBox"></div>
+
+  <div class="lobby-card">
+    <p>学習AIは、DEFAULTと同じ探索の形（2手先読み）のまま、評価関数の各項の重みだけを自己対戦で
+    少しずつ調整していきます。GPUは使わず、Javaだけで完結する軽量な仕組みです。現在のチャンピオンの
+    重みを少しランダムに変異させた「挑戦者」を作り、先後を入れ替えながら何局も対戦させ、挑戦者の
+    勝率が5割を超えたら重みを入れ替えて保存します。</p>
+    <div class="choice-row">
+      <span>世代：</span><span id="generationLabel">-</span>
+    </div>
+    <div id="lastSummaryBox"></div>
+    <div class="join-row">
+      <input type="number" id="gamesInput" value="20" min="2" max="200" style="width:80px;">
+      <button class="primary" id="trainBtn">学習を実行する</button>
+    </div>
+    <p style="font-size:12px; opacity:0.75;">局数が多いほど1回の学習結果は安定しますが、実行に時間がかかります（数局〜数十局が目安）。</p>
+  </div>
+
+  <div class="lobby-card">
+    <h2>現在の重み</h2>
+    <table class="ratings-table">
+      <tbody id="weightsBody"></tbody>
+    </table>
+  </div>
+
+  <div class="controls">
+    <a href="index.html"><button type="button">ロビーへ戻る</button></a>
+  </div>
+</div>
+
+<script src="js/learning.js"></script>
+</body>
+</html>

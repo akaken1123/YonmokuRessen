@@ -187,6 +187,7 @@
     if(level === 'TEST') return 'テストAI・3手先読み';
     if(level === 'TEST2') return 'テスト2AI・5手先読み';
     if(level === 'TEST3') return 'テスト3AI・アルファベータ探索（時間の許す限り深読み）';
+    if(level === 'LEARN') return '学習AI・自己対戦で調整された重みを使用';
     return 'デフォルトAI・2手先読み';
   }
 
