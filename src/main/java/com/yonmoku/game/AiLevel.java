@@ -6,6 +6,9 @@ package com.yonmoku.game;
  * 反復深化で、持ち時間（1手あたり約1.2秒）の許す限りできるだけ深く読む実験版。
  * LEARN は評価関数の重み（AiWeights）を自己対戦で少しずつ調整していく学習AI。探索の深さはDEFAULTと
  * 同じ（2手先読み）だが、評価関数の各項の重みがLearningServiceによる自己対戦の結果を反映して変化する。
+ * NEURAL は、別リポジトリ（YonmokuRessen-Neural-Network）でPyTorchにより学習しONNX形式で
+ * 書き出したニューラルネットワークの方策ヘッドをそのまま使う（探索は行わず、盤面を読み込んで
+ * 出力されたロジットが最大のマスへ着手する）。モデルファイルが設定されていない場合は選択できない。
  * 新しいAIの調整はまずTEST系に入れ、十分検証できてからDEFAULTに昇格させる想定。
  */
 public enum AiLevel {
@@ -13,7 +16,8 @@ public enum AiLevel {
     TEST,
     TEST2,
     TEST3,
-    LEARN;
+    LEARN,
+    NEURAL;
 
     static AiLevel fromParam(String raw) {
         if (raw == null) return DEFAULT;
@@ -22,6 +26,7 @@ public enum AiLevel {
         if ("TEST2".equals(v)) return TEST2;
         if ("TEST3".equals(v)) return TEST3;
         if ("LEARN".equals(v)) return LEARN;
+        if ("NEURAL".equals(v)) return NEURAL;
         return DEFAULT;
     }
 }

@@ -37,6 +37,7 @@
       <label><input type="radio" name="aiLevel" value="TEST2"> テスト2AI（5手先読み・実験版）</label>
       <label><input type="radio" name="aiLevel" value="TEST3"> テスト3AI（アルファベータ探索・実験版）</label>
       <label><input type="radio" name="aiLevel" value="LEARN"> 学習AI（自己対戦で重みを調整・実験版）</label>
+      <label><input type="radio" name="aiLevel" value="NEURAL"> ニューラルAI（学習済みモデル・実験版）</label>
     </div>
     <div class="controls" style="margin:0;">
       <button class="primary" id="vsAiBtn">AIと対戦を始める</button>
@@ -54,7 +55,7 @@
 
   <div class="lobby-card">
     <h2>AI対AIを観戦する</h2>
-    <p>デフォルトAI・テストAI・テスト2AI・テスト3AI・学習AI、どれが強いか自動対戦させて見比べられます。人間の操作は不要です。</p>
+    <p>デフォルトAI・テストAI・テスト2AI・テスト3AI・学習AI・ニューラルAI、どれが強いか自動対戦させて見比べられます。人間の操作は不要です。</p>
     <div class="choice-row">
       <span>黒：</span>
       <label><input type="radio" name="watchBlackAi" value="DEFAULT" checked> デフォルトAI</label>
@@ -62,6 +63,7 @@
       <label><input type="radio" name="watchBlackAi" value="TEST2"> テスト2AI</label>
       <label><input type="radio" name="watchBlackAi" value="TEST3"> テスト3AI</label>
       <label><input type="radio" name="watchBlackAi" value="LEARN"> 学習AI</label>
+      <label><input type="radio" name="watchBlackAi" value="NEURAL"> ニューラルAI</label>
     </div>
     <div class="choice-row">
       <span>白：</span>
@@ -70,6 +72,7 @@
       <label><input type="radio" name="watchWhiteAi" value="TEST2"> テスト2AI</label>
       <label><input type="radio" name="watchWhiteAi" value="TEST3"> テスト3AI</label>
       <label><input type="radio" name="watchWhiteAi" value="LEARN"> 学習AI</label>
+      <label><input type="radio" name="watchWhiteAi" value="NEURAL"> ニューラルAI</label>
     </div>
     <div class="controls" style="margin:0;">
       <button class="primary" id="watchBtn">観戦を始める</button>

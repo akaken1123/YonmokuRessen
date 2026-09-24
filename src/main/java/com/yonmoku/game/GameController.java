@@ -91,11 +91,20 @@ public class GameController {
 
     private void applyAiConfig(GameRoom room, String blackAi, String whiteAi) {
         if (blackAi != null && !blackAi.isBlank()) {
-            room.setAi("B", AiLevel.fromParam(blackAi));
+            room.setAi("B", requireAvailable(AiLevel.fromParam(blackAi)));
         }
         if (whiteAi != null && !whiteAi.isBlank()) {
-            room.setAi("W", AiLevel.fromParam(whiteAi));
+            room.setAi("W", requireAvailable(AiLevel.fromParam(whiteAi)));
         }
+    }
+
+    /** NEURALはモデルが読み込まれていないと着手できずスタックしてしまうため、対局作成時点で弾く。 */
+    private AiLevel requireAvailable(AiLevel level) {
+        if (level == AiLevel.NEURAL && !NeuralAi.isAvailable()) {
+            throw new IllegalStateException(
+                    "neural AI is not available (no model loaded; set neural.model.file on the server)");
+        }
+        return level;
     }
 
     /**

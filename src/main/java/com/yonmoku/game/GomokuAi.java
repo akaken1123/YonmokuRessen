@@ -69,6 +69,9 @@ final class GomokuAi {
         if (level == AiLevel.TEST3) {
             return chooseMoveTest3(state, aiColor);
         }
+        if (level == AiLevel.NEURAL) {
+            return NeuralAi.chooseMove(state, aiColor);
+        }
         if (level == AiLevel.LEARN) {
             return chooseMoveWeighted(state, aiColor, learnedWeights, DEFAULT_CANDIDATES);
         }
