@@ -28,8 +28,11 @@
     <div class="join-row">
       <input type="number" id="gamesInput" value="20" min="2" max="200" style="width:80px;">
       <button class="primary" id="trainBtn">学習を実行する</button>
+      <label><input type="checkbox" id="loopCheckbox"> 連続して繰り返す</label>
     </div>
-    <p style="font-size:12px; opacity:0.75;">局数が多いほど1回の学習結果は安定しますが、実行に時間がかかります（数局〜数十局が目安）。</p>
+    <p style="font-size:12px; opacity:0.75;">局数が多いほど1回の学習結果は安定しますが、実行に時間がかかります（数局〜数十局が目安）。
+    「連続して繰り返す」にチェックを入れて実行すると、チェックを外すまで自動的にバッチを繰り返します。</p>
+    <p id="loopStatus" style="font-size:12px; opacity:0.75;"></p>
   </div>
 
   <div class="lobby-card">

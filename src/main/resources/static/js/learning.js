@@ -5,6 +5,10 @@
   const weightsBody = document.getElementById('weightsBody');
   const gamesInput = document.getElementById('gamesInput');
   const trainBtn = document.getElementById('trainBtn');
+  const loopCheckbox = document.getElementById('loopCheckbox');
+  const loopStatus = document.getElementById('loopStatus');
+
+  let loopRunning = false; // 「学習を実行する」の多重起動を防ぐガード
 
   const WEIGHT_LABELS = {
     hpWeight: 'HP差1点あたりの価値',
@@ -55,10 +59,9 @@
     }
   }
 
-  trainBtn.addEventListener('click', async ()=>{
+  /** 学習バッチを1回実行する。成功すればtrue、失敗すればエラーを表示してfalseを返す。 */
+  async function runOneBatch(){
     const games = Math.max(2, Math.min(200, parseInt(gamesInput.value, 10) || 20));
-    trainBtn.disabled = true;
-    trainBtn.textContent = '学習中…';
     try{
       const res = await fetch(`/api/learning/train?games=${games}`, { method: 'POST' });
       if(!res.ok) throw new Error('学習の実行に失敗しました');
@@ -66,12 +69,32 @@
       generationLabel.textContent = summary.generation;
       renderSummary(summary);
       renderWeights(summary.currentWeights);
+      return true;
     }catch(e){
       showError(e.message || '通信エラーが発生しました。');
-    }finally{
-      trainBtn.disabled = false;
-      trainBtn.textContent = '学習を実行する';
+      return false;
     }
+  }
+
+  trainBtn.addEventListener('click', async ()=>{
+    if(loopRunning) return; // 実行中の二重クリックを無視する
+    loopRunning = true;
+    trainBtn.disabled = true;
+    let round = 0;
+    do{
+      round++;
+      trainBtn.textContent = loopCheckbox.checked ? `学習中…（連続実行 ${round}回目）` : '学習中…';
+      loopStatus.textContent = loopCheckbox.checked ? '連続実行中です。チェックを外すと、実行中のバッチが終わり次第停止します。' : '';
+      const ok = await runOneBatch();
+      if(!ok){
+        loopCheckbox.checked = false; // 通信エラー時は連続実行を止める
+        break;
+      }
+    }while(loopCheckbox.checked);
+    trainBtn.disabled = false;
+    trainBtn.textContent = '学習を実行する';
+    loopStatus.textContent = '';
+    loopRunning = false;
   });
 
   loadStatus();
