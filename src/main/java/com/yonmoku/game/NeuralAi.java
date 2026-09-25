@@ -3,9 +3,7 @@ package com.yonmoku.game;
 import java.nio.FloatBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.Map;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -16,14 +14,17 @@ import ai.onnxruntime.OrtSession;
 
 /**
  * YonmokuRessen-Neural-Networkリポジトリ（yonmoku_nn/export.py）でONNX形式に書き出した
- * 学習済みモデルを読み込み、方策ヘッドの出力（盤面81マス分のロジット）から、空いているマスの中で
- * 最も評価の高い手を選ぶ。モデルは起動時に読み込まれ、その後もNeuralAiConfigが定期的に
- * モデルファイルの更新を検知して自動で再読み込みする（学習ループで新しい重みをエクスポートしても
- * サーバー再起動なしで反映できるようにするため）。
+ * 学習済みモデルを読み込み、方策・価値ヘッドの推論を行う。モデルは起動時に読み込まれ、その後も
+ * NeuralAiConfigが定期的にモデルファイルの更新を検知して自動で再読み込みする（学習ループで新しい
+ * 重みをエクスポートしてもサーバー再起動なしで反映できるようにするため）。
  * モデルファイルが無い/読み込みに失敗した場合は静かに「利用不可」の状態になり、AiLevel.NEURALを
  * 選んだ場合のみエラーになる（他のレベルの動作には影響しない）。
- * configure/closeによるセッションの入れ替えとchooseMoveによる推論が同時に起きても安全なように、
+ * configure/closeによるセッションの入れ替えとinferによる推論が同時に起きても安全なように、
  * 読み書きロックで保護する（推論中に古いセッションがcloseされてしまうのを防ぐ）。
+ *
+ * 着手選択自体（chooseMove）はネットワーク単体の貪欲法ではなく、NeuralMcts（PUCT探索、学習側の
+ * 自己対戦 yonmoku_nn/mcts.py と同じアルゴリズム）に委譲する。学習はネットワーク単体ではなく
+ * 「ネットワーク+探索」の強さを前提にしているため、対局時にも探索しないと本来の強さが出ない。
  */
 final class NeuralAi {
 
@@ -31,8 +32,16 @@ final class NeuralAi {
 
     private static OrtEnvironment environment;
     private static OrtSession session;
+    private static volatile int mctsSimulations = 200;
+    private static volatile double mctsCPuct = 1.5;
 
     private NeuralAi() {
+    }
+
+    /** 対局時のMCTS探索の設定（NeuralAiConfigから起動時に一度だけ呼ばれる）。 */
+    static void configureSearch(int simulations, double cPuct) {
+        mctsSimulations = simulations;
+        mctsCPuct = cPuct;
     }
 
     static void configure(String modelPath) {
@@ -87,8 +96,12 @@ final class NeuralAi {
         }
     }
 
-    /** 空いているマスの中で、方策ロジットが最大のマスを返す。モデル未読み込みならIllegalStateException。 */
-    static int[] chooseMove(GameStateSnapshot state, String color) {
+    /** ネットワークの出力そのもの（方策ロジット・価値）。NeuralMcts（葉ノードの評価）が使う。 */
+    record Inference(float[] policyLogits, float value) {
+    }
+
+    /** 盤面テンソル（NeuralEncoder.encode済み）に対する生の推論。モデル未読み込みならIllegalStateException。 */
+    static Inference infer(float[] input, int size) {
         LOCK.readLock().lock();
         try {
             OrtSession activeSession = session;
@@ -98,34 +111,12 @@ final class NeuralAi {
                         "neural model is not loaded (set neural.model.file to a valid ONNX model path)");
             }
 
-            int size = state.size();
-            float[] input = NeuralEncoder.encode(state, color);
-
             try (OnnxTensor inputTensor = OnnxTensor.createTensor(activeEnv, FloatBuffer.wrap(input),
                     new long[]{1, NeuralEncoder.NUM_PLANES, size, size})) {
-                try (OrtSession.Result result = activeSession.run(Collections.singletonMap("board", inputTensor))) {
+                try (OrtSession.Result result = activeSession.run(Map.of("board", inputTensor))) {
                     float[][] policyLogits = (float[][]) result.get("policy_logits").get().getValue();
-                    float[] logits = policyLogits[0];
-
-                    List<int[]> empties = new ArrayList<>();
-                    Stone[][] board = state.board();
-                    for (int r = 0; r < size; r++) {
-                        for (int c = 0; c < size; c++) {
-                            if (board[r][c] == null) empties.add(new int[]{r, c});
-                        }
-                    }
-                    if (empties.isEmpty()) return null;
-
-                    int[] best = null;
-                    float bestScore = Float.NEGATIVE_INFINITY;
-                    for (int[] cell : empties) {
-                        float score = logits[cell[0] * size + cell[1]];
-                        if (score > bestScore) {
-                            bestScore = score;
-                            best = cell;
-                        }
-                    }
-                    return best;
+                    float[] valueOut = (float[]) result.get("value").get().getValue();
+                    return new Inference(policyLogits[0], valueOut[0]);
                 }
             } catch (OrtException e) {
                 throw new RuntimeException("neural inference failed", e);
@@ -133,5 +124,10 @@ final class NeuralAi {
         } finally {
             LOCK.readLock().unlock();
         }
+    }
+
+    /** 対局時の着手選択。NeuralMcts（PUCT探索）に委譲する。モデル未読み込みならIllegalStateException。 */
+    static int[] chooseMove(GameStateSnapshot state, String color) {
+        return NeuralMcts.chooseMove(state, mctsSimulations, mctsCPuct);
     }
 }

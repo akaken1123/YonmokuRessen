@@ -28,13 +28,18 @@ final class NeuralEncoder {
 
     /** perspective視点（自分の色）で正規化した入力テンソル。長さ NUM_PLANES*size*size のfloat配列。 */
     static float[] encode(GameStateSnapshot state, String perspective) {
+        return encode(state.board(), state.dmgMarks(), state.removalEchoes(), state.hp(), state.pending(),
+                perspective);
+    }
+
+    /**
+     * 上と同じ変換を、GameStateSnapshotではなく生のフィールドから行う版。NeuralMcts（対局時の先読み）は
+     * 実対局のインスタンスを介さない仮の局面（SimBoard）を大量に扱うため、こちらを使う。
+     */
+    static float[] encode(Stone[][] board, Set<String> dmgMarks, Map<String, Boolean> removalEchoes,
+                          Map<String, Integer> hp, Pending pending, String perspective) {
         String opponent = "B".equals(perspective) ? "W" : "B";
-        int size = state.size();
-        Stone[][] board = state.board();
-        Set<String> dmgMarks = state.dmgMarks();
-        Map<String, Boolean> removalEchoes = state.removalEchoes();
-        Map<String, Integer> hp = state.hp();
-        Pending pending = state.pending();
+        int size = board.length;
 
         float[] planes = new float[NUM_PLANES * size * size];
 

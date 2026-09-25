@@ -15,7 +15,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 起動時にONNXモデル（設定されていれば）をNeuralAiへ読み込ませる。
+ * 起動時にONNXモデル（設定されていれば）をNeuralAiへ読み込ませ、対局時のMCTS探索の設定
+ * （シミュレーション回数・c_puct）を渡す。
  * また、モデルファイルの更新日時を定期的に監視し、変更を検知したら自動で再読み込みする
  * （学習ループ側でモデルを再エクスポートしても、サーバーを再起動せずに対人戦へ反映できるようにするため）。
  */
@@ -25,15 +26,22 @@ public class NeuralAiConfig {
     private static final Logger log = LoggerFactory.getLogger(NeuralAiConfig.class);
 
     private final String modelFile;
+    private final int mctsSimulations;
+    private final double mctsCPuct;
     private volatile FileTime lastLoadedMtime;
 
-    public NeuralAiConfig(@Value("${neural.model.file:}") String modelFile) {
+    public NeuralAiConfig(@Value("${neural.model.file:}") String modelFile,
+                           @Value("${neural.mcts.simulations:200}") int mctsSimulations,
+                           @Value("${neural.mcts.c-puct:1.5}") double mctsCPuct) {
         this.modelFile = modelFile;
+        this.mctsSimulations = mctsSimulations;
+        this.mctsCPuct = mctsCPuct;
     }
 
     @PostConstruct
     void load() {
         NeuralAi.configure(modelFile);
+        NeuralAi.configureSearch(mctsSimulations, mctsCPuct);
         lastLoadedMtime = currentMtime();
     }
 
