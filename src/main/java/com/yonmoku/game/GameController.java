@@ -45,6 +45,22 @@ public class GameController {
         return startOrResolveAiTurns(room);
     }
 
+    /**
+     * 既存の対局にAIを割り当てる（作成時にblackAi/whiteAiを指定しなかった場合の後付け用）。
+     * 例えば、最初の数手だけ人間役でランダムに打たせてから、残りをAI対AI（観戦専用）に切り替える、
+     * といった評価用途（yonmoku_nn.evaluateなど）で使う。blackAi/whiteAiを省略した色はそのまま
+     * （既に人間操作中ならそのまま人間操作、既にAIが割り当て済みならそのAIのまま）。
+     */
+    @PostMapping("/{id}/ai")
+    public GameStateSnapshot setAi(@PathVariable String id,
+                                    @RequestParam(name = "blackAi", required = false) String blackAi,
+                                    @RequestParam(name = "whiteAi", required = false) String whiteAi) {
+        GameRoom room = gameService.getGame(id);
+        applyAiConfig(room, blackAi, whiteAi);
+        broadcast(id, room.snapshot());
+        return startOrResolveAiTurns(room);
+    }
+
     @GetMapping("/{id}")
     public GameStateSnapshot getGame(@PathVariable String id) {
         return gameService.getGame(id).snapshot();
