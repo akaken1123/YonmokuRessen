@@ -1,6 +1,7 @@
 package com.yonmoku.game;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -58,6 +59,32 @@ public class SimulationController {
         return new SimulationState(board, dmgMarks, removalEchoes, hp, turn.pendingAfter(),
                 nextCurrentPlayer, turn.gameOver(), turn.winner(), turn.plyCount(), turn.markEventCount(),
                 turn.markPerSide(), turn.nextMarkEventTurn());
+    }
+
+    /**
+     * ある局面で、内蔵AI（DEFAULT/TEST/TEST2/TEST3/LEARN）ならどこに打つかだけを返す
+     * （実際に着手は適用しない）。強化学習の自己対戦（YonmokuRessen-Neural-Networkリポジトリの
+     * rl_selfplay.py）で、ネットワーク同士の対戦だけでなく内蔵AIとの対戦も混ぜられるようにするため。
+     * NEURALは（このAPIの利用側が別途ネットワークで着手を選ぶので）意味を持たないが、GomokuAi側の
+     * ディスパッチをそのまま使うため呼び出し自体は可能。
+     */
+    @PostMapping("/ai-move")
+    public AiMoveResponse chooseAiMove(@RequestBody SimulateAiMoveRequest request) {
+        SimulationState in = request.state();
+        if (in.gameOver()) {
+            throw new IllegalStateException("game already over");
+        }
+        AiLevel level = AiLevel.fromParam(request.level());
+        GameStateSnapshot snapshot = new GameStateSnapshot(
+                "", in.board().length, in.board(), in.dmgMarks(), in.removalEchoes(), in.currentPlayer(),
+                in.hp(), in.pending(), in.gameOver(), in.winner(), in.plyCount(), List.of(),
+                null, null, null, null, null);
+
+        int[] move = GomokuAi.chooseMove(snapshot, in.currentPlayer(), level);
+        if (move == null) {
+            return new AiMoveResponse(null, null);
+        }
+        return new AiMoveResponse(move[0], move[1]);
     }
 
     @ExceptionHandler({IllegalStateException.class, IndexOutOfBoundsException.class, IllegalArgumentException.class})
