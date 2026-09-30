@@ -73,6 +73,9 @@ final class GomokuAi {
         if (level == AiLevel.TEST4) {
             return chooseMoveTest4(state, aiColor);
         }
+        if (level == AiLevel.TEST5) {
+            return chooseMoveTest5(state, aiColor);
+        }
         if (level == AiLevel.NEURAL) {
             return NeuralAi.chooseMove(state, aiColor);
         }
@@ -237,18 +240,47 @@ final class GomokuAi {
     // 両方で使う）。
     private static final double TEST4_DMG_MARK_BONUS = 9.0;
 
+    // TEST5: 一撃の除外量（baseCount＋dmgBonus＋backBonus、resolveMoveでそのままHPダメージへ変換される
+    // 量）そのものを評価関数の主軸にする「一撃必殺」型。evaluateBurstでpotentialRemovalTotalの二乗に
+    // この重みを掛けて加点/減点する（二乗にすることで、小さな除外を積み重ねるより大きな一撃1つを
+    // 優先させる）。HP差の安全策（damageCost）はTEST4の半分に弱め、安全な削り合いより一撃のデカさを
+    // 優先する分、被弾リスクは高くなる。
+    private static final double TEST5_BURST_WEIGHT = 12.0;
+
+    @FunctionalInterface
+    private interface Evaluator {
+        double evaluate(SimState state, String aiColor, String opponent);
+    }
+
     /**
      * TEST4の着手選択。TEST3（アルファベータ＋反復深化）に置換表を加えたもの。手順前後で同じ局面に
      * 何度も到達しても再評価を省略できる分、同じ持ち時間（1手あたり約1.2秒）でもより深く読める。
      * 加えて、ダメージ増加マスの重要性をTEST3より高く見積もる（TEST4_DMG_MARK_BONUS、evaluateTest4）。
      */
     private static int[] chooseMoveTest4(GameStateSnapshot state, String aiColor) {
+        return chooseMoveWithTT(state, aiColor, TEST4_DMG_MARK_BONUS, GomokuAi::evaluateTest4);
+    }
+
+    /**
+     * TEST5の着手選択。探索エンジン（置換表＋アルファベータ＋反復深化）はTEST4と共通で、評価関数だけ
+     * evaluateBurst（一撃の除外量の二乗を主軸にする）に差し替えたもの。
+     */
+    private static int[] chooseMoveTest5(GameStateSnapshot state, String aiColor) {
+        return chooseMoveWithTT(state, aiColor, TEST4_DMG_MARK_BONUS, GomokuAi::evaluateBurst);
+    }
+
+    /**
+     * TEST4・TEST5共通の着手選択（置換表付き反復深化アルファベータ）。評価関数（evaluator）と
+     * 候補手の絞り込みに使うダメージ増加マスの重み（dmgMarkBonus）だけを呼び出し元ごとに変える。
+     */
+    private static int[] chooseMoveWithTT(GameStateSnapshot state, String aiColor, double dmgMarkBonus,
+                                           Evaluator evaluator) {
         SimState root = SimState.fromSnapshot(state);
         String opponent = other(aiColor);
         long deadline = System.nanoTime() + TEST4_TIME_BUDGET_NANOS;
         Map<String, TTEntry> transpositionTable = new HashMap<>();
 
-        List<int[]> candidates = rankedCandidates(root, aiColor, opponent, TEST4_CANDIDATE_LIMIT, TEST4_DMG_MARK_BONUS);
+        List<int[]> candidates = rankedCandidates(root, aiColor, opponent, TEST4_CANDIDATE_LIMIT, dmgMarkBonus);
         if (candidates.isEmpty()) return null;
 
         int[] bestMove = candidates.get(0);
@@ -276,7 +308,8 @@ final class GomokuAi {
                     value = terminalValue(afterMine, aiColor, opponent);
                 } else {
                     value = alphaBetaTT(afterMine, aiColor, opponent, false, 1, depth,
-                            Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, deadline, transpositionTable);
+                            Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, deadline, transpositionTable,
+                            dmgMarkBonus, evaluator);
                 }
                 if (value == null) {
                     aborted = true;
@@ -303,10 +336,12 @@ final class GomokuAi {
      * alphaBetaと同じ探索だが、各ノードの評価を置換表でキャッシュ・再利用する。
      * 置換表のヒットは、格納されている探索深さが今必要な残り深さ以上のときだけ使う
      * （浅い探索で得た値を、より深い探索が要求されている場面で使ってしまわないようにするため）。
+     * 評価関数（evaluator）を差し替えることで、TEST4・TEST5の両方がこの探索を共有する。
      */
     private static Double alphaBetaTT(SimState state, String aiColor, String opponent, boolean maximizing,
                                        int depth, int maxDepth, double alpha, double beta, long deadline,
-                                       Map<String, TTEntry> transpositionTable) {
+                                       Map<String, TTEntry> transpositionTable, double dmgMarkBonus,
+                                       Evaluator evaluator) {
         if (state.gameOver) {
             return terminalValue(state, aiColor, opponent);
         }
@@ -332,7 +367,7 @@ final class GomokuAi {
         }
 
         if (depth >= maxDepth) {
-            double value = evaluateTest4(state, aiColor, opponent);
+            double value = evaluator.evaluate(state, aiColor, opponent);
             transpositionTable.put(ttKey, new TTEntry(depthRemaining, value, Bound.EXACT));
             return value;
         }
@@ -341,9 +376,9 @@ final class GomokuAi {
         }
 
         String against = maximizing ? opponent : aiColor;
-        List<int[]> candidates = rankedCandidates(state, mover, against, TEST4_CANDIDATE_LIMIT, TEST4_DMG_MARK_BONUS);
+        List<int[]> candidates = rankedCandidates(state, mover, against, TEST4_CANDIDATE_LIMIT, dmgMarkBonus);
         if (candidates.isEmpty()) {
-            double value = evaluateTest4(state, aiColor, opponent);
+            double value = evaluator.evaluate(state, aiColor, opponent);
             transpositionTable.put(ttKey, new TTEntry(depthRemaining, value, Bound.EXACT));
             return value;
         }
@@ -353,7 +388,7 @@ final class GomokuAi {
             SimState next = state.copy();
             applyMove(next, cell[0], cell[1], mover);
             Double value = alphaBetaTT(next, aiColor, opponent, !maximizing, depth + 1, maxDepth,
-                    alpha, beta, deadline, transpositionTable);
+                    alpha, beta, deadline, transpositionTable, dmgMarkBonus, evaluator);
             if (value == null) return null;
 
             if (maximizing) {
@@ -583,6 +618,27 @@ final class GomokuAi {
         return GameRoom.computeRemoval(copy, r, c, color) != null;
     }
 
+    /**
+     * (r,c)に color の石を置いた場合に、除外が発生するならその量（baseCount＋dmgBonus＋backBonus。
+     * resolveMoveではこの量がそのままHPダメージ、またはpendingの大きさに変換される）を返す
+     * （発生しなければ0）。wouldRemoveと違い、実際にそのマスに乗るダメージ増加マーク・除外あとマークの
+     * 有無をdmgFlag・backAttackBonusへ反映してから判定するため、除外量そのものの見積もりに使える。
+     */
+    private static int potentialRemovalTotal(SimState s, int r, int c, String color) {
+        Stone[][] board = s.board;
+        int size = board.length;
+        Stone[][] copy = new Stone[size][];
+        for (int i = 0; i < size; i++) copy[i] = board[i].clone();
+        String k = key(r, c);
+        boolean dmgFlag = s.dmgMarks.contains(k);
+        int backAttackBonus = s.removalEchoes.containsKey(k)
+                ? (Boolean.TRUE.equals(s.removalEchoes.get(k)) ? 2 : 1)
+                : 0;
+        copy[r][c] = new Stone(color, dmgFlag, backAttackBonus);
+        RemovalResult result = GameRoom.computeRemoval(copy, r, c, color);
+        return result == null ? 0 : result.total();
+    }
+
     private static List<int[]> emptyCells(Stone[][] board) {
         List<int[]> empties = new ArrayList<>();
         for (int r = 0; r < board.length; r++) {
@@ -758,6 +814,51 @@ final class GomokuAi {
         value += boardScore * 0.02;
         if (aiWinningSquares >= 2) value += 400;
         if (oppWinningSquares >= 2) value -= 400;
+
+        value += dmgFlagLineBonus(s, aiColor) - dmgFlagLineBonus(s, opponent);
+        return value;
+    }
+
+    /**
+     * TEST5（一撃必殺型）用の評価関数。evaluateTest4と同じ骨格だが、次の2点が異なる。
+     *  1. HP差の安全策（damageCost）を半分に弱める。安全に少しずつ削るより、多少のリスクを取ってでも
+     *     一撃のデカさを狙わせるため。
+     *  2. 空きマスごとに「もしここに置いたら除外でどれだけの量（baseCount＋dmgBonus＋backBonus、
+     *     resolveMoveでそのままHPダメージに変換される量）が出せるか」をpotentialRemovalTotalで求め、
+     *     自分・相手それぞれの最大値の二乗にTEST5_BURST_WEIGHTを掛けて加点/減点する。二乗にすることで、
+     *     小さな除外を複数持つより大きな一撃を1つ持つ方を強く優先する（wouldRemoveによる既存の
+     *     フォークボーナスは「除外できるかどうか」の真偽しか見ないため、除外の大きさそのものを見る
+     *     この項が必要）。
+     */
+    private static double evaluateBurst(SimState s, String aiColor, String opponent) {
+        double value = (damageCost(6 - s.hp.get(opponent)) - damageCost(6 - s.hp.get(aiColor))) * 0.5;
+
+        if (s.pending != null) {
+            double expected = s.pending.amount() * 8.0;
+            value += s.pending.target().equals(aiColor) ? -expected : expected;
+        }
+
+        double boardScore = 0;
+        int aiWinningSquares = 0;
+        int oppWinningSquares = 0;
+        int aiBestBurst = 0;
+        int oppBestBurst = 0;
+        for (int r = 0; r < s.board.length; r++) {
+            for (int c = 0; c < s.board.length; c++) {
+                if (s.board[r][c] != null) continue;
+                boardScore += heuristicScore(s.board, s.dmgMarks, s.removalEchoes, r, c, aiColor, TEST4_DMG_MARK_BONUS);
+                boardScore -= heuristicScore(s.board, s.dmgMarks, s.removalEchoes, r, c, opponent, TEST4_DMG_MARK_BONUS);
+                if (aiWinningSquares < 2 && wouldRemove(s.board, r, c, aiColor)) aiWinningSquares++;
+                if (oppWinningSquares < 2 && wouldRemove(s.board, r, c, opponent)) oppWinningSquares++;
+                aiBestBurst = Math.max(aiBestBurst, potentialRemovalTotal(s, r, c, aiColor));
+                oppBestBurst = Math.max(oppBestBurst, potentialRemovalTotal(s, r, c, opponent));
+            }
+        }
+        value += boardScore * 0.02;
+        if (aiWinningSquares >= 2) value += 400;
+        if (oppWinningSquares >= 2) value -= 400;
+        value += (double) aiBestBurst * aiBestBurst * TEST5_BURST_WEIGHT;
+        value -= (double) oppBestBurst * oppBestBurst * TEST5_BURST_WEIGHT;
 
         value += dmgFlagLineBonus(s, aiColor) - dmgFlagLineBonus(s, opponent);
         return value;

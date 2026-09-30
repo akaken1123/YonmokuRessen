@@ -7,6 +7,9 @@ package com.yonmoku.game;
  * 置換表（transposition table）を加えた版で、同じ局面の再評価を省略できる分、同じ持ち時間でも
  * より深く読める。また、ダメージ増加マスの評価上の重要性もTEST3より高くしてある（盤面の石数の
  * 優位だけでは、ダメージ増加マスを押さえられて一方的にダメージを取られる展開に弱かったため）。
+ * TEST5 は探索エンジン（置換表付きアルファベータ＋反復深化）はTEST4と共通だが、評価関数が
+ * 「一撃でどれだけ大きな除外（ダメージ）を出せるか」を主軸にした一撃必殺型。HP差の安全策を弱める分、
+ * 被弾リスクは高くなるが、一撃で大きく削り切る手を積極的に選ぶ。
  * LEARN は評価関数の重み（AiWeights）を自己対戦で少しずつ調整していく学習AI。探索の深さはDEFAULTと
  * 同じ（2手先読み）だが、評価関数の各項の重みがLearningServiceによる自己対戦の結果を反映して変化する。
  * NEURAL は、別リポジトリ（YonmokuRessen-Neural-Network）でPyTorchにより学習しONNX形式で
@@ -20,6 +23,7 @@ public enum AiLevel {
     TEST2,
     TEST3,
     TEST4,
+    TEST5,
     LEARN,
     NEURAL;
 
@@ -30,6 +34,7 @@ public enum AiLevel {
         if ("TEST2".equals(v)) return TEST2;
         if ("TEST3".equals(v)) return TEST3;
         if ("TEST4".equals(v)) return TEST4;
+        if ("TEST5".equals(v)) return TEST5;
         if ("LEARN".equals(v)) return LEARN;
         if ("NEURAL".equals(v)) return NEURAL;
         return DEFAULT;
