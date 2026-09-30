@@ -1,6 +1,7 @@
 package com.yonmoku.game;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -68,6 +69,9 @@ final class GomokuAi {
     static int[] chooseMove(GameStateSnapshot state, String aiColor, AiLevel level) {
         if (level == AiLevel.TEST3) {
             return chooseMoveTest3(state, aiColor);
+        }
+        if (level == AiLevel.TEST4) {
+            return chooseMoveTest4(state, aiColor);
         }
         if (level == AiLevel.NEURAL) {
             return NeuralAi.chooseMove(state, aiColor);
@@ -212,6 +216,194 @@ final class GomokuAi {
             if (alpha >= beta) break;
         }
         return best;
+    }
+
+    // TEST4: 探索木のどこかで既に評価した局面（置換表キー）に再び出会ったとき、探索し直さずに
+    // 済ませるためのキャッシュ。値: 探索した残り深さ、評価値、その値がexact/lower-bound/upper-bound
+    // のどれかを表すBound。同じ局面は違う経路（手順前後）から何度も現れうるため、反復深化の各深さは
+    // もちろん、1回のchooseMove呼び出し内の探索全体で使い回す（呼び出しごとに新しいMapを使うので、
+    // 別の対局・別の局面へ古いエントリが漏れることはない）。
+    private enum Bound { EXACT, LOWER, UPPER }
+
+    private record TTEntry(int depthRemaining, double value, Bound bound) {
+    }
+
+    private static final long TEST4_TIME_BUDGET_NANOS = 1_200_000_000L;
+    private static final int TEST4_CANDIDATE_LIMIT = 10;
+    private static final int TEST4_MAX_PLY = 30;
+
+    /**
+     * TEST4の着手選択。TEST3（アルファベータ＋反復深化）に置換表を加えたもの。手順前後で同じ局面に
+     * 何度も到達しても再評価を省略できる分、同じ持ち時間（1手あたり約1.2秒）でもより深く読める。
+     */
+    private static int[] chooseMoveTest4(GameStateSnapshot state, String aiColor) {
+        SimState root = SimState.fromSnapshot(state);
+        String opponent = other(aiColor);
+        long deadline = System.nanoTime() + TEST4_TIME_BUDGET_NANOS;
+        Map<String, TTEntry> transpositionTable = new HashMap<>();
+
+        List<int[]> candidates = rankedCandidates(root, aiColor, opponent, TEST4_CANDIDATE_LIMIT);
+        if (candidates.isEmpty()) return null;
+
+        int[] bestMove = candidates.get(0);
+        Map<String, Double> lastScores = new HashMap<>();
+
+        for (int depth = 2; depth <= TEST4_MAX_PLY; depth++) {
+            if (System.nanoTime() >= deadline) break;
+
+            Map<String, Double> orderingScores = lastScores;
+            List<int[]> ordered = new ArrayList<>(candidates);
+            ordered.sort(Comparator.comparingDouble(
+                    (int[] cell) -> orderingScores.getOrDefault(key(cell[0], cell[1]), 0.0)).reversed());
+
+            double bestValueThisDepth = Double.NEGATIVE_INFINITY;
+            int[] bestMoveThisDepth = null;
+            Map<String, Double> scoresThisDepth = new HashMap<>();
+            boolean aborted = false;
+
+            for (int[] cell : ordered) {
+                SimState afterMine = root.copy();
+                applyMove(afterMine, cell[0], cell[1], aiColor);
+
+                Double value;
+                if (afterMine.gameOver) {
+                    value = terminalValue(afterMine, aiColor, opponent);
+                } else {
+                    value = alphaBetaTT(afterMine, aiColor, opponent, false, 1, depth,
+                            Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, deadline, transpositionTable);
+                }
+                if (value == null) {
+                    aborted = true;
+                    break;
+                }
+
+                scoresThisDepth.put(key(cell[0], cell[1]), value);
+                if (value > bestValueThisDepth) {
+                    bestValueThisDepth = value;
+                    bestMoveThisDepth = cell;
+                }
+            }
+
+            if (aborted || bestMoveThisDepth == null) break;
+            bestMove = bestMoveThisDepth;
+            lastScores = scoresThisDepth;
+
+            if (bestValueThisDepth >= 1_000_000 || bestValueThisDepth <= -1_000_000) break;
+        }
+        return bestMove;
+    }
+
+    /**
+     * alphaBetaと同じ探索だが、各ノードの評価を置換表でキャッシュ・再利用する。
+     * 置換表のヒットは、格納されている探索深さが今必要な残り深さ以上のときだけ使う
+     * （浅い探索で得た値を、より深い探索が要求されている場面で使ってしまわないようにするため）。
+     */
+    private static Double alphaBetaTT(SimState state, String aiColor, String opponent, boolean maximizing,
+                                       int depth, int maxDepth, double alpha, double beta, long deadline,
+                                       Map<String, TTEntry> transpositionTable) {
+        if (state.gameOver) {
+            return terminalValue(state, aiColor, opponent);
+        }
+
+        String mover = maximizing ? aiColor : opponent;
+        int depthRemaining = maxDepth - depth;
+        String ttKey = stateKey(state, mover);
+
+        double originalAlpha = alpha;
+        double originalBeta = beta;
+        TTEntry cached = transpositionTable.get(ttKey);
+        if (cached != null && cached.depthRemaining() >= depthRemaining) {
+            switch (cached.bound()) {
+                case EXACT -> {
+                    return cached.value();
+                }
+                case LOWER -> alpha = Math.max(alpha, cached.value());
+                case UPPER -> beta = Math.min(beta, cached.value());
+            }
+            if (alpha >= beta) {
+                return cached.value();
+            }
+        }
+
+        if (depth >= maxDepth) {
+            double value = evaluateTest3(state, aiColor, opponent);
+            transpositionTable.put(ttKey, new TTEntry(depthRemaining, value, Bound.EXACT));
+            return value;
+        }
+        if (System.nanoTime() >= deadline) {
+            return null;
+        }
+
+        String against = maximizing ? opponent : aiColor;
+        List<int[]> candidates = rankedCandidates(state, mover, against, TEST4_CANDIDATE_LIMIT);
+        if (candidates.isEmpty()) {
+            double value = evaluateTest3(state, aiColor, opponent);
+            transpositionTable.put(ttKey, new TTEntry(depthRemaining, value, Bound.EXACT));
+            return value;
+        }
+
+        double best = maximizing ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
+        for (int[] cell : candidates) {
+            SimState next = state.copy();
+            applyMove(next, cell[0], cell[1], mover);
+            Double value = alphaBetaTT(next, aiColor, opponent, !maximizing, depth + 1, maxDepth,
+                    alpha, beta, deadline, transpositionTable);
+            if (value == null) return null;
+
+            if (maximizing) {
+                best = Math.max(best, value);
+                alpha = Math.max(alpha, best);
+            } else {
+                best = Math.min(best, value);
+                beta = Math.min(beta, best);
+            }
+            if (alpha >= beta) break;
+        }
+
+        Bound bound;
+        if (best <= originalAlpha) {
+            bound = Bound.UPPER;
+        } else if (best >= originalBeta) {
+            bound = Bound.LOWER;
+        } else {
+            bound = Bound.EXACT;
+        }
+        transpositionTable.put(ttKey, new TTEntry(depthRemaining, best, bound));
+        return best;
+    }
+
+    /** 局面（＋手番）を置換表のキーにするための文字列表現。同じ局面・同じ手番なら常に同じ文字列になる。 */
+    private static String stateKey(SimState s, String mover) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(mover).append('|');
+        int size = s.board.length;
+        for (int r = 0; r < size; r++) {
+            for (int c = 0; c < size; c++) {
+                Stone cell = s.board[r][c];
+                if (cell == null) {
+                    sb.append('.');
+                } else {
+                    sb.append(cell.color().charAt(0));
+                    sb.append(cell.dmgFlag() ? '1' : '0');
+                    sb.append(cell.backAttackBonus() > 0 ? '1' : '0');
+                }
+            }
+        }
+        sb.append('|');
+        List<String> marks = new ArrayList<>(s.dmgMarks);
+        Collections.sort(marks);
+        sb.append(String.join(",", marks));
+        sb.append('|');
+        List<String> echoKeys = new ArrayList<>(s.removalEchoes.keySet());
+        Collections.sort(echoKeys);
+        for (String k : echoKeys) {
+            sb.append(k).append('=').append(Boolean.TRUE.equals(s.removalEchoes.get(k)) ? '1' : '0').append(';');
+        }
+        sb.append('|').append(s.hp.get("B")).append(',').append(s.hp.get("W")).append('|');
+        if (s.pending != null) {
+            sb.append(s.pending.source()).append(s.pending.target()).append(s.pending.amount());
+        }
+        return sb.toString();
     }
 
     /**
