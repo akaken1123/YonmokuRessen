@@ -231,10 +231,16 @@ final class GomokuAi {
     private static final long TEST4_TIME_BUDGET_NANOS = 1_200_000_000L;
     private static final int TEST4_CANDIDATE_LIMIT = 10;
     private static final int TEST4_MAX_PLY = 30;
+    // TEST3までのheuristicScoreは通常+3.0（AiWeights.defaults().dmgMarkBonus()と同じ）。
+    // TEST4は、盤上の石の数的優位だけでは、ダメージ増加マスを押さえられて一方的にダメージを
+    // 取られる展開に弱いという指摘を受け、この重みを引き上げる（候補手の絞り込み・評価関数の
+    // 両方で使う）。
+    private static final double TEST4_DMG_MARK_BONUS = 9.0;
 
     /**
      * TEST4の着手選択。TEST3（アルファベータ＋反復深化）に置換表を加えたもの。手順前後で同じ局面に
      * 何度も到達しても再評価を省略できる分、同じ持ち時間（1手あたり約1.2秒）でもより深く読める。
+     * 加えて、ダメージ増加マスの重要性をTEST3より高く見積もる（TEST4_DMG_MARK_BONUS、evaluateTest4）。
      */
     private static int[] chooseMoveTest4(GameStateSnapshot state, String aiColor) {
         SimState root = SimState.fromSnapshot(state);
@@ -242,7 +248,7 @@ final class GomokuAi {
         long deadline = System.nanoTime() + TEST4_TIME_BUDGET_NANOS;
         Map<String, TTEntry> transpositionTable = new HashMap<>();
 
-        List<int[]> candidates = rankedCandidates(root, aiColor, opponent, TEST4_CANDIDATE_LIMIT);
+        List<int[]> candidates = rankedCandidates(root, aiColor, opponent, TEST4_CANDIDATE_LIMIT, TEST4_DMG_MARK_BONUS);
         if (candidates.isEmpty()) return null;
 
         int[] bestMove = candidates.get(0);
@@ -326,7 +332,7 @@ final class GomokuAi {
         }
 
         if (depth >= maxDepth) {
-            double value = evaluateTest3(state, aiColor, opponent);
+            double value = evaluateTest4(state, aiColor, opponent);
             transpositionTable.put(ttKey, new TTEntry(depthRemaining, value, Bound.EXACT));
             return value;
         }
@@ -335,9 +341,9 @@ final class GomokuAi {
         }
 
         String against = maximizing ? opponent : aiColor;
-        List<int[]> candidates = rankedCandidates(state, mover, against, TEST4_CANDIDATE_LIMIT);
+        List<int[]> candidates = rankedCandidates(state, mover, against, TEST4_CANDIDATE_LIMIT, TEST4_DMG_MARK_BONUS);
         if (candidates.isEmpty()) {
-            double value = evaluateTest3(state, aiColor, opponent);
+            double value = evaluateTest4(state, aiColor, opponent);
             transpositionTable.put(ttKey, new TTEntry(depthRemaining, value, Bound.EXACT));
             return value;
         }
@@ -528,6 +534,15 @@ final class GomokuAi {
      * ヒューリスティックの順位に関わらず必ず候補に含め、残り枠をcellFor視点のヒューリスティックで埋める。
      */
     private static List<int[]> rankedCandidates(SimState s, String cellFor, String against, int limit) {
+        return rankedCandidates(s, cellFor, against, limit, 3.0);
+    }
+
+    /**
+     * dmgMarkBonusを指定できる版。TEST4は通常より高いボーナス（TEST4_DMG_MARK_BONUS）を渡し、
+     * ダメージ増加マスの候補手としての優先度を上げる（絞り込みで弾かれにくくする）。
+     */
+    private static List<int[]> rankedCandidates(SimState s, String cellFor, String against, int limit,
+                                                 double dmgMarkBonus) {
         List<int[]> empties = emptyCells(s.board);
         if (empties.size() <= limit) return empties;
 
@@ -547,8 +562,8 @@ final class GomokuAi {
             if (!forcedKeys.contains(key(cell[0], cell[1]))) rest.add(cell);
         }
         rest.sort(Comparator.comparingDouble(
-                (int[] cell) -> heuristicScore(s.board, s.dmgMarks, s.removalEchoes, cell[0], cell[1], cellFor)
-                        + heuristicScore(s.board, s.dmgMarks, s.removalEchoes, cell[0], cell[1], against)
+                (int[] cell) -> heuristicScore(s.board, s.dmgMarks, s.removalEchoes, cell[0], cell[1], cellFor, dmgMarkBonus)
+                        + heuristicScore(s.board, s.dmgMarks, s.removalEchoes, cell[0], cell[1], against, dmgMarkBonus)
         ).reversed());
 
         List<int[]> result = new ArrayList<>(forced);
@@ -715,6 +730,39 @@ final class GomokuAi {
         return value;
     }
 
+    /**
+     * TEST4用の評価関数。evaluateTest3と同じ構造だが、空きマスのboardScore計算で
+     * ダメージ増加マスの重み（TEST4_DMG_MARK_BONUS、通常の3.0倍）を使う。盤上の石の数的優位
+     * だけでは、ダメージ増加マスを押さえられて一方的にダメージを取られる展開に弱かったための調整。
+     */
+    private static double evaluateTest4(SimState s, String aiColor, String opponent) {
+        double value = damageCost(6 - s.hp.get(opponent)) - damageCost(6 - s.hp.get(aiColor));
+
+        if (s.pending != null) {
+            double expected = s.pending.amount() * 8.0;
+            value += s.pending.target().equals(aiColor) ? -expected : expected;
+        }
+
+        double boardScore = 0;
+        int aiWinningSquares = 0;
+        int oppWinningSquares = 0;
+        for (int r = 0; r < s.board.length; r++) {
+            for (int c = 0; c < s.board.length; c++) {
+                if (s.board[r][c] != null) continue;
+                boardScore += heuristicScore(s.board, s.dmgMarks, s.removalEchoes, r, c, aiColor, TEST4_DMG_MARK_BONUS);
+                boardScore -= heuristicScore(s.board, s.dmgMarks, s.removalEchoes, r, c, opponent, TEST4_DMG_MARK_BONUS);
+                if (aiWinningSquares < 2 && wouldRemove(s.board, r, c, aiColor)) aiWinningSquares++;
+                if (oppWinningSquares < 2 && wouldRemove(s.board, r, c, opponent)) oppWinningSquares++;
+            }
+        }
+        value += boardScore * 0.02;
+        if (aiWinningSquares >= 2) value += 400;
+        if (oppWinningSquares >= 2) value -= 400;
+
+        value += dmgFlagLineBonus(s, aiColor) - dmgFlagLineBonus(s, opponent);
+        return value;
+    }
+
     /** 残りHPからの被ダメージ量（lost）に対するコスト。追い詰められているときほど1点の価値が急に増す。 */
     private static double damageCost(double lost) {
         return lost * 50.0 + lost * lost * 10.0;
@@ -742,6 +790,12 @@ final class GomokuAi {
 
     private static double heuristicScore(Stone[][] board, Set<String> dmgMarks, Map<String, Boolean> removalEchoes,
                                           int r, int c, String color) {
+        return heuristicScore(board, dmgMarks, removalEchoes, r, c, color, 3.0);
+    }
+
+    /** dmgMarkBonusを指定できる版。既定は3.0（AiWeights.defaults().dmgMarkBonus()と同じ）。 */
+    private static double heuristicScore(Stone[][] board, Set<String> dmgMarks, Map<String, Boolean> removalEchoes,
+                                          int r, int c, String color, double dmgMarkBonus) {
         double score = 0;
         for (int[] d : DIRS) {
             score += lineWeight(board, r, c, d[0], d[1], color);
@@ -751,7 +805,7 @@ final class GomokuAi {
         double distance = Math.hypot(r - center, c - center);
         score += (size - distance) * 0.6;
         String k = key(r, c);
-        if (dmgMarks.contains(k)) score += 3;
+        if (dmgMarks.contains(k)) score += dmgMarkBonus;
         if (removalEchoes.containsKey(k)) score += 1.5;
         return score;
     }
