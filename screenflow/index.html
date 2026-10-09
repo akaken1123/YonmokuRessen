@@ -800,6 +800,7 @@ function showExport(tab='json'){
     <p class="note">${notes[tab]}</p>${body}
     <div class="row"><button class="btn" id="x-copy" ${tab==='png'?'hidden':''}>コピー</button><button class="btn" id="x-dl">ファイルに保存</button></div>`);
   $('#x-close').onclick = closeModal;
+  if (window.self !== window.top) $('#x-dl').hidden = true; // 埋め込み表示ではダウンロード不可
   document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => showExport(b.dataset.tab));
   if (tab === 'png'){
     const s = exportSVG(), img = new Image();
